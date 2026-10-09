@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deploy Tracker</title>
+  <meta name="description" content="How long do launched side projects stay online? Daily uptime checks on the 100 most-upvoted websites each month from Show HN and Reddit.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M6 20h5l3-9 4 13 3-7h5' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <div class="brand">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8"/><path d="M6 20h5l3-9 4 13 3-7h5"/></svg></span>
+        <div>
+          <h1>Deploy Tracker</h1>
+          <p class="sub">How long do launched side projects stay online?</p>
+        </div>
+      </div>
+      <div class="top-meta">
+        <span class="pulse" aria-hidden="true"></span>
+        <span id="checked">Loading…</span>
+        <button id="theme" class="icon-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <p>Every day a GitHub Action visits the <strong>100 most-upvoted websites launched each month</strong> on
+        <span id="source-links"></span>, and records whether each one still loads.
+        The charts below show how many survive as they age.</p>
+    </section>
+
+    <nav class="filters" aria-label="Filters">
+      <div class="seg" role="radiogroup" aria-label="Popularity" data-filter="tier">
+        <button role="radio" data-value="10">Top 10%</button>
+        <button role="radio" data-value="50">Top 50%</button>
+        <button role="radio" data-value="100" aria-checked="true">Top 100%</button>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Category" data-filter="category">
+        <button role="radio" data-value="all" aria-checked="true">All</button>
+        <button role="radio" data-value="games">Games</button>
+        <button role="radio" data-value="apps">Apps &amp; tools</button>
+        <button role="radio" data-value="other">Other</button>
+      </div>
+      <label class="select">
+        <span class="sr">Source</span>
+        <select id="source-filter"><option value="all">All sources</option></select>
+      </label>
+      <span class="count" id="count"></span>
+    </nav>
+
+    <section class="hero card">
+      <div class="hero-main">
+        <p class="eyebrow">Survival</p>
+        <p class="hero-figure"><span id="hero-pct">–</span><span class="pct">%</span></p>
+        <p class="hero-text">of sites are still online <strong id="hero-days">90</strong> days after their launch post.</p>
+        <label class="slider">
+          <span class="sr">Days after launch</span>
+          <input id="day-slider" type="range" min="1" max="365" value="90">
+          <span class="slider-scale"><span>1 day</span><span>6 months</span><span>1 year</span></span>
+        </label>
+        <p class="hero-note" id="hero-note"></p>
+      </div>
+      <div class="tiles">
+        <div class="tile"><p class="tile-label">Sites tracked</p><p class="tile-value" id="kpi-tracked">–</p><p class="tile-foot" id="kpi-tracked-foot"></p></div>
+        <div class="tile"><p class="tile-label">Up right now</p><p class="tile-value" id="kpi-up">–</p><p class="tile-foot" id="kpi-up-foot"></p></div>
+        <div class="tile"><p class="tile-label">Half-life</p><p class="tile-value" id="kpi-half">–</p><p class="tile-foot">days until half are gone</p></div>
+        <div class="tile"><p class="tile-label">Outages, last 30 days</p><p class="tile-value" id="kpi-outages">–</p><p class="tile-foot" id="kpi-outages-foot"></p></div>
+      </div>
+    </section>
+
+    <section class="card wide">
+      <div class="card-head">
+        <div>
+          <h2>Still online, by days since launch</h2>
+          <p class="card-sub">Share of sites that load on the first check at or after each age.</p>
+        </div>
+        <div class="seg small" role="radiogroup" aria-label="Break down by" id="breakdown">
+          <button role="radio" data-value="tier" aria-checked="true">Popularity</button>
+          <button role="radio" data-value="category">Category</button>
+          <button role="radio" data-value="source">Source</button>
+          <button role="radio" data-value="hosting">Hosting</button>
+        </div>
+      </div>
+      <div class="legend" id="survival-legend"></div>
+      <div class="chart" id="survival" style="height:340px"></div>
+    </section>
+
+    <div class="grid two">
+      <section class="card">
+        <div class="card-head"><div>
+          <h2>Alive today, by launch month</h2>
+          <p class="card-sub">Each month's tracked sites, by today's status.</p>
+        </div></div>
+        <div class="legend" id="cohort-legend"></div>
+        <div class="chart" id="cohorts" style="height:300px"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><div>
+          <h2>How sites go offline</h2>
+          <p class="card-sub">What the latest check found for every site that's not up.</p>
+        </div></div>
+        <div class="chart" id="reasons" style="height:300px"></div>
+      </section>
+    </div>
+
+    <section class="card wide">
+      <div class="card-head"><div>
+        <h2>Status wall</h2>
+        <p class="card-sub">Every tracked site, by launch month and rank. Hover for details, click to visit.</p>
+      </div></div>
+      <div class="legend" id="wall-legend"></div>
+      <div class="chart" id="wall"></div>
+    </section>
+
+    <div class="grid two">
+      <section class="card">
+        <div class="card-head"><div>
+          <h2>Fleet uptime</h2>
+          <p class="card-sub">Share of tracked sites up on each daily check.</p>
+        </div></div>
+        <div class="chart" id="uptime" style="height:220px"></div>
+        <h3 class="mini-title">New outages per day</h3>
+        <div class="chart" id="outages" style="height:110px"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><div>
+          <h2>Does popularity buy longevity?</h2>
+          <p class="card-sub" id="popularity-sub">Share alive today by rank within launch month.</p>
+        </div></div>
+        <div class="chart" id="popularity" style="height:360px"></div>
+      </section>
+    </div>
+
+    <div class="grid two">
+      <section class="card">
+        <div class="card-head"><div>
+          <h2>Domains and hosting</h2>
+          <p class="card-sub">Share alive today, by top-level domain or free host.</p>
+        </div></div>
+        <div class="chart" id="hosting" style="height:340px"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><div>
+          <h2>Recent outages and recoveries</h2>
+          <p class="card-sub">Status changes over the last 14 checks.</p>
+        </div></div>
+        <ol class="log" id="log"></ol>
+      </section>
+    </div>
+
+    <section class="card wide">
+      <div class="card-head">
+        <div>
+          <h2>All tracked sites</h2>
+          <p class="card-sub" id="table-sub"></p>
+        </div>
+        <label class="search"><span class="sr">Search sites</span><input id="search" type="search" placeholder="Search sites"></label>
+      </div>
+      <div class="table-wrap">
+        <table id="table">
+          <thead><tr>
+            <th data-sort="rank" class="num">Rank</th>
+            <th data-sort="title">Site</th>
+            <th data-sort="source">Source</th>
+            <th data-sort="category">Category</th>
+            <th data-sort="votes" class="num">Votes</th>
+            <th data-sort="age" class="num">Age</th>
+            <th data-sort="uptime" class="num">Uptime</th>
+            <th>Last 30 checks</th>
+            <th data-sort="status">Status</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <button class="more" id="more" type="button">Show more</button>
+    </section>
+
+    <footer class="notes">
+      <h2>How this works</h2>
+      <p>Posts come from Show HN and r/SideProject, r/InternetIsBeautiful, r/IMadeThis, r/ClaudeAI and r/SaaS, starting October 2025, using the same rules as <a href="https://deploylist.com">deploylist</a>: a post counts when it centres on one standalone website, and a site posted more than once counts once, from its first post, with its best vote count. Each launch month keeps its 100 most-upvoted sites; the top 10% and top 50% are its top 10 and top 50.</p>
+      <p>A check counts as <strong>up</strong> when the landing page answers, including bot walls (401, 403, 429, Cloudflare challenges) a person could get past; <strong>parked</strong> when the domain now shows a for-sale or parking page; and <strong>down</strong> on DNS failures, timeouts, TLS errors, 404/410, 5xx, or a host saying the deployment was removed. Sites that look down are retried once before being logged.</p>
+      <p>Survival at age <em>x</em> uses the first check made at or after <em>x</em> days. Sites launched before checks began only have checks at their current age, so early on the curve treats "down now" as "down then" and errs low; it sharpens as daily checks build up.</p>
+      <p class="fine">Source and data: <a href="https://github.com/PigeonFlare/deploy-tracker">github.com/PigeonFlare/deploy-tracker</a></p>
+    </footer>
+  </main>
+
+  <div class="tooltip" id="tooltip" role="status" aria-live="polite"></div>
+  <script src="vendor/d3.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
