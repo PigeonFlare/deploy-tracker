@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -31,7 +31,7 @@ jobs:
         id: track
         if: github.event_name != 'push'
         continue-on-error: true
-        timeout-minutes: 35
+        timeout-minutes: 20
         run: python3 -B scripts/track.py
       - name: Commit results
         if: steps.track.outcome == 'success'

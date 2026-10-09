@@ -9,7 +9,7 @@ How long do launched side projects stay online? A one-page dashboard that follow
 
 ## Setup
 
-Settings → Pages → Source: **GitHub Actions**. Then run the workflow once from the Actions tab to collect and check the first batch. The Reddit archive backfill spends up to 18 minutes a run reading the subreddits in turn, so older months fill in with Reddit posts over the first several daily runs.
+Settings → Pages → Source: **GitHub Actions**. Then run the workflow once from the Actions tab to collect and check the first batch. The Reddit archive backfill takes a couple of weeks of daily runs to reach the present, so older months fill in with Reddit posts gradually.
 
 ## Local
 

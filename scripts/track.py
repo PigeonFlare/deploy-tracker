@@ -45,8 +45,7 @@ SOURCES = [{"name": "Show HN", "url": "https://news.ycombinator.com/show"}] + [
     {"name": f"r/{s}", "url": f"https://www.reddit.com/r/{s}/"} for s in SUBREDDITS]
 
 ARCHIVE_API = "https://arctic-shift.photon-reddit.com/api/posts/search"
-ARCHIVE_BUDGET = 600
-ARCHIVE_MINUTES = 18
+ARCHIVE_BUDGET = 60
 ARCHIVE_PAUSE = 2
 ARCHIVE_SETTLE = 36 * 3600  # the archive re-reads a post's score about 36 hours after it's posted
 ARCHIVE_FIELDS = "id,title,url,selftext,score,created_utc,over_18"
@@ -185,21 +184,18 @@ def archive_get(params, budget):
     return data.get("data") or []
 
 
-def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET, minutes=ARCHIVE_MINUTES):
+def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET):
     """Walk each subreddit forward from START through the archive, oldest first, stopping
-    ARCHIVE_SETTLE short of now so the scores read are settled. Subreddits take turns, one
-    request each, and the cursors are saved, so a run that spends its budget picks up where
-    it left off."""
+    ARCHIVE_SETTLE short of now so the scores read are settled. The cursor is saved, so a
+    run that spends its budget picks up where it left off."""
     cursors = state.setdefault("reddit_cursors", {})
     left = [budget]
     new = 0
     limit = state.get("archive_limit", "auto")
-    stop = int(now.timestamp() - ARCHIVE_SETTLE)
-    deadline = time.monotonic() + minutes * 60
-    pending = [sub for sub in SUBREDDITS if cursors.get(sub, int(START.timestamp())) < stop]
     try:
-        while pending and time.monotonic() < deadline:
-            for sub in list(pending):
+        for sub in SUBREDDITS:
+            stop = int(now.timestamp() - ARCHIVE_SETTLE)
+            while cursors.get(sub, int(START.timestamp())) < stop:
                 after = cursors.get(sub, int(START.timestamp()))
                 params = {"subreddit": sub, "after": after, "before": stop, "sort": "asc",
                           "limit": limit, "fields": ARCHIVE_FIELDS}
@@ -209,9 +205,7 @@ def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET, minutes=ARCHIVE_MIN
                     if e.code == 400 and limit != 100:
                         limit = state["archive_limit"] = 100
                         continue
-                    print(f"warn: r/{sub} archive: {e}", file=sys.stderr)
-                    pending.remove(sub)
-                    continue
+                    raise
                 for p in batch:
                     title = p.get("title") or ""
                     if p.get("over_18") or (sub in MAKER_ONLY and not MAKER_TITLE.search(title)):
@@ -223,9 +217,8 @@ def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET, minutes=ARCHIVE_MIN
                                     p["score"], f"r/{sub}", p.get("created_utc"))
                 if not batch:
                     cursors[sub] = stop
-                    pending.remove(sub)
-                else:
-                    cursors[sub] = int(batch[-1]["created_utc"]) + 1
+                    break
+                cursors[sub] = int(batch[-1]["created_utc"]) + 1
     except ArchivePaused as e:
         print(f"Reddit archive: pausing until the next run ({e})")
     except Exception as e:
