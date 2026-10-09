@@ -481,36 +481,40 @@ def wayback_changes(url, since):
     return out
 
 
-def update_wayback(sites, archive, today, budget=WAYBACK_BUDGET, minutes=WAYBACK_MINUTES, workers=3):
-    """Look up archive history for sites never looked up or not refreshed lately, a few at a time."""
+def update_wayback(sites, archive, today, budget=WAYBACK_BUDGET, minutes=WAYBACK_MINUTES, pause=1.5, strikes=5):
+    """Look up archive history for sites never looked up or not refreshed lately, one at a time,
+    backing off when the Archive says it's busy."""
     def stale(s):
         seen = archive.get(s["id"], {}).get("t")
         return not seen or (dt.date.fromisoformat(today) - dt.date.fromisoformat(seen)).days >= WAYBACK_REFRESH
     queue = sorted((s for s in sites if stale(s)), key=lambda s: (s["id"] in archive, archive.get(s["id"], {}).get("t", "")))
     queue = queue[:budget]
     stop = time.monotonic() + minutes * 60
-    blocked, errors = [], {}
-
-    def run(s):
-        if blocked or time.monotonic() > stop:
-            return
+    errors, done, busy, i = {}, 0, 0, 0
+    while i < len(queue) and time.monotonic() < stop:
+        s = queue[i]
         try:
             changes = wayback_changes(s["url"], s["created"] - 30 * 86400)
         except urllib.error.HTTPError as e:
             errors[f"http {e.code}"] = errors.get(f"http {e.code}", 0) + 1
             if e.code in (429, 503):
-                blocked.append(e.code)
-            return
+                busy += 1
+                if busy >= strikes:
+                    break
+                time.sleep(20 * busy)
+                continue
+            i += 1
+            continue
         except Exception as e:
             key = f"{type(e).__name__}: {str(e)[:80]}"
             errors[key] = errors.get(key, 0) + 1
-            return
+            i += 1
+            continue
+        busy = max(0, busy - 1)
         archive[s["id"]] = {"t": today, "last": max(changes) if changes else None, "v": len(changes)}
-
-    before = sum(1 for v in archive.values() if v.get("t") == today)
-    with ThreadPoolExecutor(workers) as ex:
-        list(ex.map(run, queue))
-    done = sum(1 for v in archive.values() if v.get("t") == today) - before
+        done += 1
+        i += 1
+        time.sleep(pause)
     print(f"Internet Archive: looked up {done} of {len(queue)} queued sites"
           + (f"; errors {dict(sorted(errors.items(), key=lambda kv: -kv[1])[:4])}" if errors else ""))
     return archive

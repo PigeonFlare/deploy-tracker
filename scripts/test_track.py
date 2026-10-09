@@ -208,10 +208,10 @@ class ChangeTest(unittest.TestCase):
             raise track.urllib.error.HTTPError(url, 429, "slow down", {}, None)
 
         archive = {}
-        with mock.patch.object(track, "wayback_changes", side_effect=fake):
-            track.update_wayback(sites, archive, "2026-10-09", workers=1)
+        with mock.patch.object(track, "wayback_changes", side_effect=fake), mock.patch.object(track.time, "sleep"):
+            track.update_wayback(sites, archive, "2026-10-09", strikes=3)
         self.assertEqual(archive["s0.com"], {"t": "2026-10-09", "last": 1775000000, "v": 2})
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 4)
 
 
 if __name__ == "__main__":

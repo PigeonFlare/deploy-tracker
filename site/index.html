@@ -80,6 +80,17 @@
       <div><dt>Outages, last 30 days</dt><dd id="kpi-outages">–</dd><dd class="sub" id="kpi-outages-foot"></dd></div>
     </dl>
 
+    <section class="block updates">
+      <header class="block-head"><div>
+        <h2>Still being worked on, by age</h2>
+        <p class="dek">Share of sites whose most recent change came at least this many days after launch. The dashed line is the share still online.</p>
+      </div></header>
+      <p class="update-lede" id="update-lede"></p>
+      <div class="legend" id="updates-legend"></div>
+      <div class="chart" id="updates"></div>
+      <p class="note" id="updates-note"></p>
+    </section>
+
     <section class="live" aria-labelledby="live-title">
       <div class="live-side">
         <h2 id="live-title">This morning's check</h2>
@@ -186,6 +197,7 @@
             <th data-sort="votes" class="num">Votes</th>
             <th data-sort="age" class="num">Age</th>
             <th data-sort="uptime" class="num">Uptime</th>
+            <th data-sort="updated" class="num">Changed</th>
             <th>Last 30 checks</th>
             <th data-sort="status">Status</th>
           </tr></thead>
@@ -199,6 +211,7 @@
       <h2>Method</h2>
       <p>Posts come from Show HN, r/SideProject, r/InternetIsBeautiful, r/IMadeThis, r/ClaudeAI and r/SaaS, starting October 2025. A post counts when it links to one standalone website. A site posted more than once counts once, from its first post, with its best vote count. Each launch month keeps its 100 most-upvoted sites. Vote filters and ranks compare forum votes across every site in view.</p>
       <p>A site is up when its front page answers, including when it turns away automated visitors (401, 403, 429 or a Cloudflare challenge) that a person would get past. It's parked when the domain shows a for-sale or parking page, and down on DNS failures, timeouts, TLS errors, 404 or 410, server errors, or a host saying the deployment was removed. Sites that look down are retried once before being recorded.</p>
+      <p>A site's last change is the latest of three dates: the day the daily check first sees its page text or bundled scripts differ from the day before, the Last-Modified date its server reports (when that isn't just the current time), and the last time the Internet Archive captured a new version of its front page. Sites the Archive rarely visits can look stale when they aren't, so the curve runs a little low.</p>
       <p>Survival at age <em>x</em> uses each site's first check made at or after <em>x</em> days. Sites posted before checks began have only been checked at their current age, so for now the curve counts "down today" as "down then" and runs a little low. It firms up as daily checks accumulate.</p>
       <p class="fine"><a href="https://github.com/PigeonFlare/deploy-tracker">Source and data on GitHub</a></p>
     </footer>

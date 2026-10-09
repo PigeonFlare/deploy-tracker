@@ -632,7 +632,7 @@
     let rows = filtered().filter((s) => !q || s.title.toLowerCase().includes(q) || s.domain.includes(q));
     const order = { up: 0, parked: 1, down: 2, none: 3 };
     const key = state.sort.key;
-    const val = (s) => (key === "status" ? order[s.status] : key === "age" ? -s.created : key === "uptime" ? (s.uptime ?? -1) : s[key]);
+    const val = (s) => (key === "status" ? order[s.status] : key === "age" ? -s.created : key === "uptime" ? (s.uptime ?? -1) : key === "updated" ? (s.updated ?? 0) : s[key]);
     rows.sort((a, b) => {
       const va = val(a), vb = val(b);
       const c = typeof va === "string" ? va.localeCompare(vb) : va - vb;
@@ -658,7 +658,7 @@
       site.append(title, dom);
       tr.append(site, el("td", null, s.source), el("td", "nowrap", CATEGORY_LABEL[s.category] || s.category),
         el("td", "num", fmtInt(s.votes)), el("td", "num", s.age >= 60 ? `${Math.round(s.age / 30.4)}mo` : `${s.age}d`),
-        el("td", "num", s.uptime == null ? "–" : pct(s.uptime)));
+        el("td", "num", s.uptime == null ? "–" : pct(s.uptime)), el("td", "num nowrap", ago(s.updated)));
       const strip = el("div", "strip");
       const hist = s.history.slice(-30).padStart(30, ".");
       for (const ch of hist) {
@@ -676,6 +676,100 @@
     $("#more").hidden = rows.length <= state.limit;
   }
 
+
+  // ---------- Still being updated ----------
+  // At age x: of sites at least x days old with a known change date, the share last changed x or more days after launch.
+  function updateCurve(list, maxAge) {
+    const known = list.filter((s) => s.updated);
+    const out = [];
+    for (let x = 0; x <= maxAge; x++) {
+      let n = 0, k = 0;
+      for (const s of known) {
+        if (s.age < x) continue;
+        n++;
+        if ((s.updated - s.created) / DAY >= x) k++;
+      }
+      out.push({ x, y: n ? k / n : null, n });
+    }
+    return out;
+  }
+
+  function renderUpdates() {
+    const node = $("#updates");
+    const series = breakdownSeries().filter((s) => s.list.some((d) => d.updated));
+    const all = filtered({ ignoreTier: state.breakdown === "tier" });
+    const known = all.filter((s) => s.updated);
+    if (known.length < LINE_MIN_N) {
+      legend($("#updates-legend"), []);
+      $("#update-lede").textContent = "";
+      $("#updates-note").textContent = "";
+      return emptyState(node, "Change dates are still being collected for these sites.");
+    }
+    const maxAge = Math.max(30, maxAgeOf(all));
+    series.forEach((s) => { s.points = updateCurve(s.list, maxAge); });
+    const online = survival(all, maxAge);
+    const overall = updateCurve(all, maxAge);
+    const half = overall.find((d) => d.n >= LINE_MIN_N && d.y != null && d.y < 0.5);
+    const lastOk = [...overall].reverse().find((d) => d.n >= LINE_MIN_N);
+    const lede = $("#update-lede");
+    lede.replaceChildren();
+    if (half) {
+      lede.append("Half of sites stop changing within ", el("strong", null, `${half.x} days`), " of launch.");
+    } else if (lastOk) {
+      lede.append("More than half of sites were still changing ", el("strong", null, `${lastOk.x} days`), " after launch.");
+    }
+    const recent = known.filter((s) => nowTs - s.updated < 30 * DAY).length;
+    $("#updates-note").textContent = `Based on ${fmtInt(known.length)} of ${fmtInt(all.length)} sites with a known change date. ${pct(recent / known.length)} of them changed in the last 30 days.`;
+    const refColor = css("--ink-2");
+    legend($("#updates-legend"), [...series, { label: "Still online", color: refColor }]);
+    const labelled = series.length <= 4 && node.clientWidth > 520;
+    const m = { top: 12, right: labelled ? 92 : 16, bottom: 30, left: 40 };
+    const f = frame(node, node.clientWidth < 520 ? 260 : 320, m);
+    const x = d3.scaleLinear().domain([0, maxAge]).range([0, f.iw]);
+    const y = d3.scaleLinear().domain([0, 1]).range([f.ih, 0]);
+    f.g.append("g").attr("class", "gridlines").call(d3.axisLeft(y).ticks(5).tickSize(-f.iw).tickFormat(""));
+    f.g.append("g").attr("class", "axis").call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".0%")).tickSize(0).tickPadding(8)).select(".domain").remove();
+    const xt = (f.iw < 500 ? [0, 90, 180, 270, 365] : [0, 30, 60, 90, 120, 180, 240, 300, 365]).filter((t) => t <= maxAge);
+    f.g.append("g").attr("class", "axis").attr("transform", `translate(0,${f.ih})`)
+      .call(d3.axisBottom(x).tickValues(xt).tickFormat((d) => d + "d").tickSizeOuter(0));
+    const line = d3.line().defined((d) => d.n >= LINE_MIN_N && d.y != null).x((d) => x(d.x)).y((d) => y(d.y)).curve(d3.curveMonotoneX);
+    f.g.append("path").attr("fill", "none").attr("stroke", refColor).attr("stroke-width", 1.5).attr("stroke-dasharray", "4 4").attr("d", line(online));
+    if (half) {
+      f.g.append("line").attr("class", "marker-rule").attr("x1", x(half.x)).attr("x2", x(half.x)).attr("y1", y(0.5)).attr("y2", f.ih);
+      f.g.append("text").attr("class", "label").attr("x", x(half.x) + 5).attr("y", f.ih - 6).text(`${half.x}d`);
+    }
+    for (const s of series) {
+      f.g.append("path").attr("fill", "none").attr("stroke", s.color).attr("stroke-width", 2)
+        .attr("stroke-linejoin", "round").attr("stroke-linecap", "round").attr("d", line(s.points));
+    }
+    if (labelled) {
+      const ends = series.map((s) => {
+        const p = [...s.points].reverse().find((d) => d.n >= LINE_MIN_N && d.y != null);
+        return p && { s, p, ty: y(p.y) };
+      }).filter(Boolean).sort((a, b) => a.ty - b.ty);
+      for (let i = 1; i < ends.length; i++) ends[i].ty = Math.max(ends[i].ty, ends[i - 1].ty + 14);
+      for (const e of ends) f.g.append("text").attr("class", "label strong").attr("x", x(e.p.x) + 8).attr("y", e.ty + 4).text(`${e.s.label} ${pct(e.p.y)}`);
+    }
+    const cross = f.g.append("line").attr("class", "crosshair").attr("y1", 0).attr("y2", f.ih).style("opacity", 0);
+    f.g.append("rect").attr("class", "hit").attr("width", f.iw).attr("height", f.ih)
+      .on("pointermove", (ev) => {
+        const xi = Math.max(0, Math.min(maxAge, Math.round(x.invert(d3.pointer(ev)[0]))));
+        cross.attr("x1", x(xi)).attr("x2", x(xi)).style("opacity", 1);
+        const rows = series.map((s) => {
+          const p = s.points[xi];
+          return { color: s.color, value: p.n >= LINE_MIN_N && p.y != null ? pct(p.y) : "–", label: `${s.label} · ${p.n} sites` };
+        });
+        rows.push({ color: refColor, value: pct(online[xi].y), label: "still online" });
+        showTip(ev, { title: `Still changing ${xi} days after launch`, rows });
+      })
+      .on("pointerleave", () => { cross.style("opacity", 0); hideTip(); });
+  }
+
+  function ago(ts) {
+    if (!ts) return "–";
+    const d = Math.max(0, Math.floor((nowTs - ts) / DAY));
+    return d < 1 ? "today" : d < 60 ? `${d}d ago` : `${Math.round(d / 30.4)}mo ago`;
+  }
 
   // ---------- Live replay ----------
   const SHORT = { dns: "No DNS", timeout: "Timed out", refused: "Refused", connection: "No connection", tls: "Bad HTTPS",
@@ -805,7 +899,7 @@
     if (!data) return;
     hideTip();
     $("#count").textContent = `${fmtInt(filtered().length)} sites in view`;
-    renderHero(); renderSurvival(); renderCohorts(); renderReasons(); renderWall();
+    renderHero(); renderSurvival(); renderUpdates(); renderCohorts(); renderReasons(); renderWall();
     renderUptime(); renderPopularity(); renderHosting(); renderLog(); renderTable();
   }
 
@@ -822,7 +916,7 @@
     state.limit = 50;
     renderAll();
   }));
-  bindSeg($("#breakdown"), (v) => { state.breakdown = v; renderSurvival(); });
+  bindSeg($("#breakdown"), (v) => { state.breakdown = v; renderSurvival(); renderUpdates(); });
   $("#source-filter").addEventListener("change", (ev) => { state.source = ev.target.value; state.limit = 50; renderAll(); });
   $("#day-slider").addEventListener("input", (ev) => { state.day = +ev.target.value; renderHero(); renderSurvival(); });
   $("#search").addEventListener("input", (ev) => { state.search = ev.target.value; state.limit = 50; renderTable(); });
@@ -831,7 +925,7 @@
     th.tabIndex = 0;
     const pick = () => {
       const k = th.dataset.sort;
-      state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : (["votes", "uptime"].includes(k) ? -1 : 1) };
+      state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : (["votes", "uptime", "updated"].includes(k) ? -1 : 1) };
       renderTable();
     };
     th.addEventListener("click", pick);
