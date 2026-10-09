@@ -14,6 +14,9 @@ keeps the highest vote count it got. Standard library only.
 import argparse
 import base64
 import datetime as dt
+import email.utils
+import hashlib
+import html
 import json
 import os
 import re
@@ -34,6 +37,7 @@ ROOT = os.path.join(os.path.dirname(__file__), "..")
 POSTS = os.path.join(ROOT, "data", "posts.json")
 STATE = os.path.join(ROOT, "data", "state.json")
 OUT = os.path.join(ROOT, "site", "data", "tracker.json")
+WAYBACK = os.path.join(ROOT, "data", "wayback.json")
 
 UA = "deploy-tracker/1.0 (+https://github.com/PigeonFlare/deploy-tracker)"
 START = dt.datetime(2025, 10, 1, tzinfo=dt.timezone.utc)
@@ -73,6 +77,10 @@ GONE_TEXT = re.compile(
     r"\baccount (?:has been )?suspended\b", re.I)
 
 UP, WALLED, PARKED, DOWN = "U", "B", "P", "D"
+WAYBACK_API = "https://web.archive.org/cdx/search/cdx"
+WAYBACK_BUDGET = 300
+WAYBACK_MINUTES = 8
+WAYBACK_REFRESH = 14  # days before a site's archive history is looked up again
 PROBE_DEADLINE = 30
 PROBE_HOPS = 6
 
@@ -426,8 +434,79 @@ def probe(url):
                 return DOWN, {**info, "reason": "removed"}
             if "html" in (resp.headers.get("Content-Type") or "").lower():
                 info["summary"] = page_summary(body)
+                info["fp"] = fingerprint(text)
+            info["lm"] = last_modified(resp.headers.get("Last-Modified"))
             return UP, info
     return DOWN, {"reason": "redirect loop"}
+
+
+_STRIP = re.compile(r"<(script|style|noscript|template)\b[^>]*>.*?</\1\s*>", re.I | re.S)
+_ASSET = re.compile(r"""<(?:script|link)\b[^>]*?\b(?:src|href)\s*=\s*["']([^"']+)["']""", re.I)
+
+
+def fingerprint(text):
+    """A short hash of what a visitor would notice changing: the page's words (minus digits, so
+    clocks and counters don't count) and the bundled scripts and styles it loads, whose file
+    names usually change on every deploy."""
+    assets = sorted({a for a in _ASSET.findall(text) if not re.search(r"[?&](v|t|ts|_)=\d{9,}", a)})
+    words = re.sub(r"<[^>]+>", " ", _STRIP.sub(" ", text))
+    words = re.sub(r"\s+", " ", re.sub(r"\d+", "", html.unescape(words))).strip()
+    return hashlib.sha1("\n".join(assets + [words]).encode()).hexdigest()[:12]
+
+
+def last_modified(value, now=None):
+    """Last-Modified as a timestamp, ignoring servers that just send the current time."""
+    if not value:
+        return None
+    try:
+        ts = int(email.utils.parsedate_to_datetime(value).timestamp())
+    except (TypeError, ValueError, OverflowError):
+        return None
+    now = now or time.time()
+    return ts if START.timestamp() - 400 * 86400 < ts < now - 3600 else None
+
+
+def wayback_changes(url, since):
+    """Timestamps at which the Internet Archive saw the page's content change."""
+    target = re.sub(r"^https?://", "", url).rstrip("/") + "/"
+    q = urllib.parse.urlencode({"url": target, "output": "json", "fl": "timestamp", "filter": "statuscode:200",
+                                "collapse": "digest", "from": time.strftime("%Y%m%d", time.gmtime(since)), "limit": 5000})
+    rows = json.loads(fetch(f"{WAYBACK_API}?{q}", timeout=40) or b"[]")
+    out = []
+    for row in rows[1:]:
+        try:
+            out.append(int(dt.datetime.strptime(row[0][:14], "%Y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc).timestamp()))
+        except (ValueError, IndexError):
+            pass
+    return out
+
+
+def update_wayback(sites, archive, today, budget=WAYBACK_BUDGET, minutes=WAYBACK_MINUTES, workers=3):
+    """Look up archive history for sites never looked up or not refreshed lately, a few at a time."""
+    def stale(s):
+        seen = archive.get(s["id"], {}).get("t")
+        return not seen or (dt.date.fromisoformat(today) - dt.date.fromisoformat(seen)).days >= WAYBACK_REFRESH
+    queue = sorted((s for s in sites if stale(s)), key=lambda s: (s["id"] in archive, archive.get(s["id"], {}).get("t", "")))
+    queue = queue[:budget]
+    stop = time.monotonic() + minutes * 60
+    blocked = []
+
+    def run(s):
+        if blocked or time.monotonic() > stop:
+            return
+        try:
+            changes = wayback_changes(s["url"], s["created"] - 30 * 86400)
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 503):
+                blocked.append(e.code)
+            return
+        except Exception:
+            return
+        archive[s["id"]] = {"t": today, "last": max(changes) if changes else None, "v": len(changes)}
+
+    with ThreadPoolExecutor(workers) as ex:
+        list(ex.map(run, queue))
+    return archive
 
 
 def check_all(sites, workers=48):
@@ -460,7 +539,7 @@ def check_all(sites, workers=48):
 
 # --- Output -------------------------------------------------------------------------
 
-def update_tracker(tracked, results, today, previous, started=None):
+def update_tracker(tracked, results, today, previous, started=None, archive=None):
     days = list(previous.get("days") or [])
     old = {s["id"]: s for s in previous.get("sites") or []}
     if not days or days[-1] != today:
@@ -473,12 +552,28 @@ def update_tracker(tracked, results, today, previous, started=None):
         status, info = results.get(s["id"], (".", {}))
         history += status
         summary = info.pop("summary", "")
+        fp, lm = info.pop("fp", None), info.pop("lm", None)
         last = {k: v for k, v in info.items() if v is not None}
         auto = category(s["title"], s["source"], summary) if summary else before.get("category_auto") or category(s["title"], s["source"])
         entry = {k: s[k] for k in ("id", "url", "domain", "title", "votes", "source", "sources", "post_url",
                                    "created", "cohort", "rank")}
         entry.update(category=s.get("category") or auto, category_auto=auto, hosting=hosting(s["domain"]),
                      history=history, last=last)
+        entry["fp"] = fp or before.get("fp")
+        changed = before.get("changed")
+        if fp and before.get("fp") and fp != before["fp"]:
+            changed = int(dt.datetime.fromisoformat(today).replace(tzinfo=dt.timezone.utc).timestamp())
+        if changed:
+            entry["changed"] = changed
+        lm = lm or before.get("lm")
+        if lm:
+            entry["lm"] = lm
+        wb = (archive or {}).get(s["id"], {}).get("last")
+        known = [t for t in (changed, lm, wb) if t]
+        if known:
+            entry["updated"] = max(known)
+        if not entry["fp"]:
+            del entry["fp"]
         if status in (UP, WALLED):
             entry["last_up"] = today
         elif before.get("last_up"):
@@ -494,6 +589,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-collect", action="store_true", help="only check the sites already tracked")
     ap.add_argument("--archive-budget", type=int, default=ARCHIVE_BUDGET)
+    ap.add_argument("--wayback-budget", type=int, default=WAYBACK_BUDGET)
+    ap.add_argument("--wayback-minutes", type=float, default=WAYBACK_MINUTES)
     args = ap.parse_args()
     now = now_utc()
     posts, state = load(POSTS, {}), load(STATE, {})
@@ -520,12 +617,19 @@ def main():
     print(f"checking {len(tracked)} sites across {len({s['cohort'] for s in tracked})} launch months")
     started = now_utc().isoformat(timespec="seconds")
     results = check_all(tracked)
-    data = update_tracker(tracked, results, now.date().isoformat(), previous, started)
+    archive = load(WAYBACK, {})
+    try:
+        update_wayback(tracked, archive, now.date().isoformat(), args.wayback_budget, args.wayback_minutes)
+    except Exception as e:
+        print(f"warn: archive lookups: {e}", file=sys.stderr)
+    save(WAYBACK, archive)
+    data = update_tracker(tracked, results, now.date().isoformat(), previous, started, archive)
     save(OUT, data)
     counts = {}
     for s in data["sites"]:
         counts[s["history"][-1]] = counts.get(s["history"][-1], 0) + 1
     print("today: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    print(f"archive history for {len(archive)} sites; change date known for {sum('updated' in s for s in data['sites'])}")
 
 
 if __name__ == "__main__":

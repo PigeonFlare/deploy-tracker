@@ -1,5 +1,6 @@
 import http.server
 import threading
+import email.utils
 import unittest
 from unittest import mock
 
@@ -163,6 +164,54 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(by_id["b.com"]["history"], ".U")
         self.assertEqual(by_id["a.com"]["hosting"], "vercel.app")
         self.assertEqual(by_id["a.com"]["category"], "games")
+
+
+class ChangeTest(unittest.TestCase):
+    def test_fingerprint_ignores_digits_and_scripts_but_not_bundles(self):
+        a = '<html><script>var t=1</script><script src="/app.abc.js"></script><p>Hello 12:01</p></html>'
+        b = '<html><script>var t=2</script><script src="/app.abc.js"></script><p>Hello 12:02</p></html>'
+        c = a.replace("app.abc.js", "app.def.js")
+        self.assertEqual(track.fingerprint(a), track.fingerprint(b))
+        self.assertNotEqual(track.fingerprint(a), track.fingerprint(c))
+        self.assertNotEqual(track.fingerprint(a), track.fingerprint(a.replace("Hello", "Howdy")))
+
+    def test_last_modified_skips_the_current_time(self):
+        now = 1791500000
+        self.assertIsNone(track.last_modified(email.utils.formatdate(now - 60, usegmt=True), now))
+        self.assertEqual(track.last_modified(email.utils.formatdate(now - 86400 * 9, usegmt=True), now), now - 86400 * 9)
+        self.assertIsNone(track.last_modified("garbage", now))
+
+    def test_updated_takes_the_latest_signal(self):
+        site = {"id": "a.com", "url": "https://a.com/", "domain": "a.com", "title": "tool", "votes": 20,
+                "source": "Show HN", "sources": ["Show HN"], "post_url": "p", "created": 1760000000,
+                "cohort": "2025-10", "rank": 1}
+        day1 = track.update_tracker([site], {"a.com": ("U", {"fp": "x", "lm": 1770000000})}, "2026-10-09", {},
+                                    archive={"a.com": {"last": 1780000000}})
+        self.assertEqual(day1["sites"][0]["updated"], 1780000000)
+        self.assertNotIn("changed", day1["sites"][0])
+        day2 = track.update_tracker([site], {"a.com": ("U", {"fp": "y"})}, "2026-10-10", day1,
+                                    archive={"a.com": {"last": 1780000000}})
+        s = day2["sites"][0]
+        self.assertEqual(s["fp"], "y")
+        self.assertEqual(s["changed"], 1791590400)
+        self.assertEqual(s["updated"], 1791590400)
+        self.assertEqual(s["lm"], 1770000000)
+
+    def test_wayback_stops_when_throttled(self):
+        sites = [{"id": f"s{i}.com", "url": f"https://s{i}.com/", "created": 1760000000} for i in range(5)]
+        calls = []
+
+        def fake(url, since):
+            calls.append(url)
+            if url.startswith("https://s0"):
+                return [1770000000, 1775000000]
+            raise track.urllib.error.HTTPError(url, 429, "slow down", {}, None)
+
+        archive = {}
+        with mock.patch.object(track, "wayback_changes", side_effect=fake):
+            track.update_wayback(sites, archive, "2026-10-09", workers=1)
+        self.assertEqual(archive["s0.com"], {"t": "2026-10-09", "last": 1775000000, "v": 2})
+        self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ jobs:
         env:
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-        run: python3 -B scripts/track.py ${{ github.event_name == 'workflow_dispatch' && !inputs.collect && '--no-collect' || '' }}
+        run: python3 -B scripts/track.py ${{ github.event_name == 'workflow_dispatch' && !inputs.collect && '--no-collect --wayback-budget 2000 --wayback-minutes 28' || '' }}
       - name: Commit results
         if: steps.track.outcome == 'success'
         env:
