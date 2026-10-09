@@ -94,11 +94,14 @@ class RankTest(unittest.TestCase):
 
 class RedditTest(unittest.TestCase):
     def test_subreddits_take_turns_and_resume(self):
-        calls = []
+        calls, slowed = [], []
 
         def fake_get(params, left):
             if left[0] <= 0:
                 raise track.ArchivePaused("budget")
+            if len(calls) == 3 and not slowed:
+                slowed.append(True)
+                raise track.ArchivePaused("HTTP 422")
             left[0] -= 1
             calls.append(params["subreddit"])
             t = params["after"] + 60
@@ -107,12 +110,13 @@ class RedditTest(unittest.TestCase):
 
         state, posts = {}, {}
         now = track.dt.datetime(2026, 10, 9, tzinfo=track.dt.timezone.utc)
-        with mock.patch.object(track, "archive_get", side_effect=fake_get):
+        with mock.patch.object(track, "archive_get", side_effect=fake_get), mock.patch.object(track.time, "sleep"):
             track.collect_reddit(posts, state, now, budget=10)
-        self.assertEqual(calls[:5], track.SUBREDDITS)
+        self.assertEqual(set(calls[:6]), set(track.SUBREDDITS))
         self.assertEqual(len(calls), 10)
         self.assertEqual(len(state["reddit_cursors"]), 5)
         self.assertEqual(len(posts), 10)
+        self.assertEqual(state["archive_limit"], 100)
 
 
 class TrackerTest(unittest.TestCase):

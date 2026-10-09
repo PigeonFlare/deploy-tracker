@@ -47,6 +47,7 @@ SOURCES = [{"name": "Show HN", "url": "https://news.ycombinator.com/show"}] + [
 ARCHIVE_API = "https://arctic-shift.photon-reddit.com/api/posts/search"
 ARCHIVE_BUDGET = 600
 ARCHIVE_MINUTES = 18
+ARCHIVE_STRIKES = 6
 ARCHIVE_PAUSE = 2
 ARCHIVE_SETTLE = 36 * 3600  # the archive re-reads a post's score about 36 hours after it's posted
 ARCHIVE_FIELDS = "id,title,url,selftext,score,created_utc,over_18"
@@ -196,6 +197,7 @@ def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET, minutes=ARCHIVE_MIN
     limit = state.get("archive_limit", "auto")
     stop = int(now.timestamp() - ARCHIVE_SETTLE)
     deadline = time.monotonic() + minutes * 60
+    strikes = 0
     pending = [sub for sub in SUBREDDITS if cursors.get(sub, int(START.timestamp())) < stop]
     try:
         while pending and time.monotonic() < deadline:
@@ -205,6 +207,15 @@ def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET, minutes=ARCHIVE_MIN
                           "limit": limit, "fields": ARCHIVE_FIELDS}
                 try:
                     batch = archive_get(params, left)
+                    strikes = 0
+                except ArchivePaused as e:
+                    strikes += 1
+                    if left[0] <= 0 or strikes > ARCHIVE_STRIKES:
+                        raise
+                    limit = state["archive_limit"] = 100
+                    print(f"Reddit archive: {e}; waiting {30 * strikes}s")
+                    time.sleep(30 * strikes)
+                    continue
                 except urllib.error.HTTPError as e:
                     if e.code == 400 and limit != 100:
                         limit = state["archive_limit"] = 100
