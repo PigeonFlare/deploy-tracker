@@ -489,7 +489,7 @@ def update_wayback(sites, archive, today, budget=WAYBACK_BUDGET, minutes=WAYBACK
     queue = sorted((s for s in sites if stale(s)), key=lambda s: (s["id"] in archive, archive.get(s["id"], {}).get("t", "")))
     queue = queue[:budget]
     stop = time.monotonic() + minutes * 60
-    blocked = []
+    blocked, errors = [], {}
 
     def run(s):
         if blocked or time.monotonic() > stop:
@@ -497,15 +497,22 @@ def update_wayback(sites, archive, today, budget=WAYBACK_BUDGET, minutes=WAYBACK
         try:
             changes = wayback_changes(s["url"], s["created"] - 30 * 86400)
         except urllib.error.HTTPError as e:
+            errors[f"http {e.code}"] = errors.get(f"http {e.code}", 0) + 1
             if e.code in (429, 503):
                 blocked.append(e.code)
             return
-        except Exception:
+        except Exception as e:
+            key = f"{type(e).__name__}: {str(e)[:80]}"
+            errors[key] = errors.get(key, 0) + 1
             return
         archive[s["id"]] = {"t": today, "last": max(changes) if changes else None, "v": len(changes)}
 
+    before = sum(1 for v in archive.values() if v.get("t") == today)
     with ThreadPoolExecutor(workers) as ex:
         list(ex.map(run, queue))
+    done = sum(1 for v in archive.values() if v.get("t") == today) - before
+    print(f"Internet Archive: looked up {done} of {len(queue)} queued sites"
+          + (f"; errors {dict(sorted(errors.items(), key=lambda kv: -kv[1])[:4])}" if errors else ""))
     return archive
 
 
