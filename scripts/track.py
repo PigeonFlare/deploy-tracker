@@ -203,19 +203,20 @@ def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET, minutes=ARCHIVE_MIN
         while pending and time.monotonic() < deadline:
             for sub in list(pending):
                 after = cursors.get(sub, int(START.timestamp()))
-                params = {"subreddit": sub, "after": after, "before": stop, "sort": "asc",
-                          "limit": limit, "fields": ARCHIVE_FIELDS}
+                params = {"subreddit": sub, "after": after, "before": stop, "sort": "asc", "fields": ARCHIVE_FIELDS}
                 try:
-                    batch = archive_get(params, left)
+                    while True:
+                        try:
+                            batch = archive_get({**params, "limit": limit}, left)
+                            break
+                        except ArchivePaused as e:
+                            strikes += 1
+                            if left[0] <= 0 or strikes > ARCHIVE_STRIKES:
+                                raise
+                            limit = state["archive_limit"] = 100
+                            print(f"Reddit archive: {e}; waiting {30 * strikes}s")
+                            time.sleep(30 * strikes)
                     strikes = 0
-                except ArchivePaused as e:
-                    strikes += 1
-                    if left[0] <= 0 or strikes > ARCHIVE_STRIKES:
-                        raise
-                    limit = state["archive_limit"] = 100
-                    print(f"Reddit archive: {e}; waiting {30 * strikes}s")
-                    time.sleep(30 * strikes)
-                    continue
                 except urllib.error.HTTPError as e:
                     if e.code == 400 and limit != 100:
                         limit = state["archive_limit"] = 100

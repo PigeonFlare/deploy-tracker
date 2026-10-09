@@ -112,7 +112,7 @@ class RedditTest(unittest.TestCase):
         now = track.dt.datetime(2026, 10, 9, tzinfo=track.dt.timezone.utc)
         with mock.patch.object(track, "archive_get", side_effect=fake_get), mock.patch.object(track.time, "sleep"):
             track.collect_reddit(posts, state, now, budget=10)
-        self.assertEqual(set(calls[:6]), set(track.SUBREDDITS))
+        self.assertEqual(calls[:5], track.SUBREDDITS)
         self.assertEqual(len(calls), 10)
         self.assertEqual(len(state["reddit_cursors"]), 5)
         self.assertEqual(len(posts), 10)
