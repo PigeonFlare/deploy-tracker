@@ -12,6 +12,7 @@ keeps the highest vote count it got. Standard library only.
 """
 
 import argparse
+import base64
 import datetime as dt
 import json
 import os
@@ -80,8 +81,8 @@ def now_utc():
     return dt.datetime.now(dt.timezone.utc)
 
 
-def fetch(url, timeout=30):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+def fetch(url, timeout=30, headers=None, data=None):
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": UA, **(headers or {})})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read(30_000_000)
 
@@ -135,6 +136,53 @@ def week_chunks(start, end):
     while t < end:
         yield t, min(t + dt.timedelta(days=7), end)
         t += dt.timedelta(days=7)
+
+
+def reddit_token():
+    cid, secret = os.environ.get("REDDIT_CLIENT_ID"), os.environ.get("REDDIT_CLIENT_SECRET")
+    if not (cid and secret):
+        return None
+    auth = base64.b64encode(f"{cid}:{secret}".encode()).decode()
+    body = fetch("https://www.reddit.com/api/v1/access_token", headers={"Authorization": f"Basic {auth}"},
+                 data=b"grant_type=client_credentials")
+    return json.loads(body)["access_token"]
+
+
+def collect_reddit_api(posts, state, now):
+    """With Reddit API credentials, read each subreddit's top posts of the year (up to 1,000,
+    once a week) and of the month (every run), with exact vote counts."""
+    token = reddit_token()
+    if not token:
+        print("Reddit API: no credentials; using the archive")
+        return False
+    year_due = now.timestamp() - state.get("reddit_year_at", 0) > 7 * 86400
+    new = 0
+    for sub in SUBREDDITS:
+        after = ""
+        for page in range(10 if year_due else 1):
+            q = urllib.parse.urlencode({"t": "year" if year_due else "month", "limit": 100, "after": after, "raw_json": 1})
+            try:
+                data = json.loads(fetch(f"https://oauth.reddit.com/r/{sub}/top?{q}", headers={"Authorization": f"bearer {token}"}))["data"]
+            except Exception as e:
+                print(f"warn: r/{sub} API: {e}", file=sys.stderr)
+                break
+            for c in data["children"]:
+                p = c["data"]
+                title = p.get("title") or ""
+                if p.get("over_18") or p.get("stickied") or (sub in MAKER_ONLY and not MAKER_TITLE.search(title)):
+                    continue
+                direct = None if p.get("is_self") else p.get("url_overridden_by_dest") or p.get("url")
+                url = pick_site(title, direct, URL_RE.findall(p.get("selftext") or ""))
+                new += add_post(posts, f"https://www.reddit.com{p.get('permalink', '')}", url, title,
+                                p.get("score"), f"r/{sub}", p.get("created_utc"))
+            after = data.get("after")
+            if not after:
+                break
+            time.sleep(1)
+    if year_due:
+        state["reddit_year_at"] = int(now.timestamp())
+    print(f"Reddit API: {new} new posts" + (" (year backfill)" if year_due else ""))
+    return True
 
 
 def collect_hn(posts, state, now):
@@ -448,12 +496,18 @@ def main():
     posts, state = load(POSTS, {}), load(STATE, {})
     previous = load(OUT, {})
     if not args.no_collect:
-        for step in (lambda: collect_deploy_list(posts), lambda: collect_hn(posts, state, now),
-                     lambda: collect_reddit(posts, state, now, args.archive_budget)):
+        for step in (lambda: collect_deploy_list(posts), lambda: collect_hn(posts, state, now)):
             try:
                 step()
             except Exception as e:
                 print(f"warn: {e}", file=sys.stderr)
+        try:
+            api = collect_reddit_api(posts, state, now)
+        except Exception as e:
+            print(f"warn: Reddit API: {e}", file=sys.stderr)
+            api = False
+        if not api:
+            collect_reddit(posts, state, now, args.archive_budget)
         save(POSTS, posts)
         save(STATE, state, pretty=True)
     known = {s["id"] for s in previous.get("sites") or []}

@@ -125,6 +125,28 @@ class RedditTest(unittest.TestCase):
         self.assertIn("https://y1759276860.app/", {p["url"] for p in posts.values()})
 
 
+class RedditApiTest(unittest.TestCase):
+    def test_reads_a_year_of_top_posts_then_a_month(self):
+        urls = []
+
+        def fake_fetch(url, timeout=30, headers=None, data=None):
+            urls.append(url)
+            child = {"data": {"title": "I built a tiny game", "url": "https://tiny.game/", "score": 900,
+                              "permalink": "/r/x/comments/abc/", "created_utc": 1770000000}}
+            return track.json.dumps({"data": {"children": [child], "after": None}}).encode()
+
+        state, posts = {}, {}
+        now = track.dt.datetime(2026, 10, 9, tzinfo=track.dt.timezone.utc)
+        with mock.patch.object(track, "reddit_token", return_value="t"), \
+                mock.patch.object(track, "fetch", side_effect=fake_fetch), mock.patch.object(track.time, "sleep"):
+            self.assertTrue(track.collect_reddit_api(posts, state, now))
+            self.assertTrue(all("t=year" in u for u in urls))
+            urls.clear()
+            track.collect_reddit_api(posts, state, now + track.dt.timedelta(days=1))
+            self.assertTrue(all("t=month" in u for u in urls))
+        self.assertEqual(posts["https://www.reddit.com/r/x/comments/abc/"]["votes"], 900)
+
+
 class TrackerTest(unittest.TestCase):
     def test_history_grows_one_char_per_day(self):
         site = {"id": "a.com", "url": "https://a.com/", "domain": "a.vercel.app", "title": "my game", "votes": 20,
