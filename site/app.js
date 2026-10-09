@@ -23,6 +23,8 @@
   const state = { tier: 100, category: "all", source: "all", breakdown: "tier", day: 90, search: "",
                   sort: { key: "votes", dir: -1 }, limit: 50 };
   let data = null, sites = [], dayTs = [], nowTs = 0;
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let intro = !reduceMotion;
 
   const $ = (sel) => document.querySelector(sel);
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -210,8 +212,14 @@
     }
     const line = d3.line().defined((d) => d.n >= LINE_MIN_N && d.y != null).x((d) => x(d.x)).y((d) => y(d.y)).curve(d3.curveMonotoneX);
     for (const s of series) {
-      f.g.append("path").attr("fill", "none").attr("stroke", s.color).attr("stroke-width", 2)
+      const path = f.g.append("path").attr("fill", "none").attr("stroke", s.color).attr("stroke-width", 2)
         .attr("stroke-linejoin", "round").attr("stroke-linecap", "round").attr("d", line(s.points));
+      if (intro) {
+        const len = path.node().getTotalLength();
+        path.attr("stroke-dasharray", `${len} ${len}`).attr("stroke-dashoffset", len)
+          .transition().delay(500 + series.indexOf(s) * 160).duration(1600).ease(d3.easeCubicInOut)
+          .attr("stroke-dashoffset", 0).on("end", () => path.attr("stroke-dasharray", null));
+      }
     }
     if (labelled) {
       const ends = series.map((s) => {
@@ -220,7 +228,8 @@
       }).filter(Boolean).sort((a, b) => a.ty - b.ty);
       for (let i = 1; i < ends.length; i++) ends[i].ty = Math.max(ends[i].ty, ends[i - 1].ty + 14);
       for (const e of ends) {
-        f.g.append("text").attr("class", "label strong").attr("x", x(e.p.x) + 8).attr("y", e.ty + 4).text(`${e.s.label} ${pct(e.p.y)}`);
+        const t = f.g.append("text").attr("class", "label strong").attr("x", x(e.p.x) + 8).attr("y", e.ty + 4).text(`${e.s.label} ${pct(e.p.y)}`);
+        if (intro) t.style("opacity", 0).transition().delay(1900 + series.indexOf(e.s) * 160).duration(500).style("opacity", 1);
       }
     }
     const cross = f.g.append("line").attr("class", "crosshair").attr("y1", 0).attr("y2", f.ih).style("opacity", 0);
@@ -247,7 +256,35 @@
   }
 
   // ---------- Hero & KPIs ----------
+  function countUp(node, delay) {
+    const m = node.textContent.match(/^([^\d]*)([\d,]+)(.*)$/);
+    if (!m) return;
+    const end = +m[2].replace(/,/g, "");
+    node.textContent = m[1] + "0" + m[3];
+    d3.select(node).transition().delay(delay).duration(1400).ease(d3.easeCubicOut)
+      .tween("text", () => (t) => { node.textContent = m[1] + fmtInt(Math.round(end * t)) + m[3]; });
+  }
+
+  function reveal() {
+    const items = [".masthead", ".lede h1", ".lede p", ".filters", ".headline-text .big", ".headline-text .big-text",
+      ".headline-text .slider", ".headline-text .note", ".headline-chart", ".stats", ".live",
+      "main > .block", "main > .cols > .block", ".notes"].flatMap((sel) => [...document.querySelectorAll(sel)]);
+    if (reduceMotion || !("IntersectionObserver" in window)) return;
+    let batch = 0, first = true;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        e.target.style.setProperty("--d", `${(first ? batch++ : 0) * 90}ms`);
+        e.target.classList.add("in");
+        io.unobserve(e.target);
+      }
+      first = false;
+    }, { rootMargin: "0px 0px -8% 0px" });
+    items.forEach((n) => { n.classList.add("reveal"); io.observe(n); });
+  }
+
   function renderHero() {
+    ["#hero-pct", "#kpi-tracked", "#kpi-up", "#kpi-outages"].forEach((sel) => d3.select(sel).interrupt());
     const list = filtered();
     const maxAge = Math.max(state.day, maxAgeOf(list));
     const curve = survival(list, maxAge);
@@ -278,6 +315,7 @@
       recovered += t.filter((e) => e.kind === "up").length;
     }
     $("#kpi-outages").textContent = fmtInt(outages);
+    if (intro) ["#hero-pct", "#kpi-tracked", "#kpi-up", "#kpi-outages"].forEach((sel, i) => countUp($(sel), i ? 300 + i * 120 : 250));
     $("#kpi-outages-foot").textContent = dayTs.length > 1 ? `${fmtInt(recovered)} recoveries` : "needs two days of checks";
   }
 
@@ -645,7 +683,6 @@
                   "bad url": "Bad URL", "private address": "Private IP" };
   const live = { entries: [], i: 0, timer: null, tally: null };
   const clockFmt = d3.utcFormat("%H:%M:%S");
-  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function resultOf(e) {
     const l = e.s.last || {};
@@ -804,7 +841,9 @@
   new ResizeObserver((entries) => {
     const w = Math.round(entries[0].contentRect.width);
     if (w === lastWidth) return;
+    const firstRun = !lastWidth;
     lastWidth = w;
+    if (firstRun) return;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(renderAll, 120);
   }).observe($("main"));
@@ -824,10 +863,12 @@
     });
     select.value = state.source;
     renderAll();
+    intro = false;
     startLive();
     tick();
   }
 
+  reveal();
   const getData = () => fetch("data/tracker.json", { cache: "no-cache" })
     .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
   getData().then(load).catch(() => {
