@@ -107,13 +107,17 @@
                age: Math.max(0, Math.floor((nowTs - s.created) / DAY)), hostKey: g.key, free: g.free,
                reason: (s.last && s.last.reason) || null };
     });
+    sites.filter((s) => s.rank <= raw.top_n).sort(byVotes).forEach((s, i) => { s.voteRank = i + 1; });
   }
 
+  const byVotes = (a, b) => b.votes - a.votes || a.created - b.created;
+  const topShare = (list, share) => [...list].sort(byVotes).slice(0, Math.max(1, Math.ceil(list.length * share / 100)));
+
   function filtered({ ignoreTier = false } = {}) {
-    return sites.filter((s) => s.rank <= data.top_n
-      && (ignoreTier || s.rank <= state.tier)
+    const base = sites.filter((s) => s.rank <= data.top_n
       && (state.category === "all" || s.category === state.category)
       && (state.source === "all" || s.source === state.source));
+    return ignoreTier || state.tier >= 100 || !base.length ? base : topShare(base, state.tier);
   }
 
   // Survival at age x = share up on each site's first check at or after x days.
@@ -163,9 +167,9 @@
     switch (state.breakdown) {
       case "tier":
         return [
-          { label: "Top 10", color: css("--t10"), list: base.filter((s) => s.rank <= 10) },
-          { label: "Top 50", color: css("--t50"), list: base.filter((s) => s.rank <= 50) },
-          { label: "Top 100", color: css("--t100"), list: base },
+          { label: "Top 10%", color: css("--t10"), list: base.length ? topShare(base, 10) : [] },
+          { label: "Top 50%", color: css("--t50"), list: base.length ? topShare(base, 50) : [] },
+          { label: "All", color: css("--t100"), list: base },
         ];
       case "category":
         return ["apps", "games", "other"].map((c, i) => ({ label: CATEGORY_LABEL[c], color: css(`--s${i + 1}`), list: base.filter((s) => s.category === c) }));
@@ -189,9 +193,11 @@
     if (!series.length) return emptyState(node, "No sites match these filters.");
     const labelled = series.length <= 4 && node.clientWidth > 520;
     const m = { top: 12, right: labelled ? 92 : 16, bottom: 30, left: 40 };
-    const f = frame(node, 340, m);
+    const f = frame(node, node.clientWidth < 520 ? 300 : 400, m);
     const x = d3.scaleLinear().domain([0, maxAge]).range([0, f.iw]);
-    const y = d3.scaleLinear().domain([0, 1]).range([f.ih, 0]);
+    const lows = series.flatMap((s) => s.points.filter((d) => d.n >= LINE_MIN_N && d.y != null).map((d) => d.y));
+    const lo = Math.max(0, Math.floor(((d3.min(lows) ?? 0) - 0.04) * 10) / 10);
+    const y = d3.scaleLinear().domain([lo, 1]).range([f.ih, 0]);
     f.g.append("g").attr("class", "gridlines").call(d3.axisLeft(y).ticks(5).tickSize(-f.iw).tickFormat(""));
     f.g.append("g").attr("class", "axis").call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".0%")).tickSize(0).tickPadding(8)).select(".domain").remove();
     const xt = (f.iw < 500 ? [0, 90, 180, 270, 365] : [0, 30, 60, 90, 120, 180, 240, 300, 365]).filter((t) => t <= maxAge);
@@ -200,6 +206,7 @@
 
     if (state.day <= maxAge) {
       f.g.append("line").attr("class", "marker-rule").attr("x1", x(state.day)).attr("x2", x(state.day)).attr("y1", 0).attr("y2", f.ih);
+      f.g.append("text").attr("class", "label").attr("x", x(state.day) + 5).attr("y", f.ih - 6).text(`${state.day}d`);
     }
     const line = d3.line().defined((d) => d.n >= LINE_MIN_N && d.y != null).x((d) => x(d.x)).y((d) => y(d.y)).curve(d3.curveMonotoneX);
     for (const s of series) {
@@ -231,7 +238,12 @@
         });
         showTip(ev, { title: `${xi} days after launch`, rows });
       })
-      .on("pointerleave", () => { cross.style("opacity", 0); dots.forEach((d) => d.style("opacity", 0)); hideTip(); });
+      .on("pointerleave", () => { cross.style("opacity", 0); dots.forEach((d) => d.style("opacity", 0)); hideTip(); })
+      .on("click", (ev) => {
+        state.day = Math.max(1, Math.min(365, Math.round(x.invert(d3.pointer(ev)[0]))));
+        $("#day-slider").value = state.day;
+        renderHero(); renderSurvival();
+      });
   }
 
   // ---------- Hero & KPIs ----------
@@ -405,7 +417,7 @@
       .attr("fill", (s) => (keep.has(s) ? colors[s.status] : colors.none))
       .on("pointermove", (ev, s) => showTip(ev, {
         title: s.title,
-        rows: [{ value: statusText(s), label: s.domain }, { value: "#" + s.rank, label: `${monthLabel(s.cohort, true)} · ${fmtInt(s.votes)} votes` }],
+        rows: [{ value: statusText(s), label: s.domain }, { value: fmtInt(s.votes), label: `votes · #${s.rank} in ${monthLabel(s.cohort, true)}` }],
         note: `${s.source} · ${CATEGORY_LABEL[s.category] || s.category} · ${s.age} days old`,
       }))
       .on("pointerleave", hideTip)
@@ -493,11 +505,11 @@
     const node = $("#popularity");
     const list = filtered({ ignoreTier: true }).filter((s) => s.status !== "none");
     if (!list.length) return emptyState(node, "No checks yet.");
-    const size = 10;
-    const buckets = d3.range(0, data.top_n, size).map((a) => {
-      const ss = list.filter((s) => s.rank > a && s.rank <= a + size);
-      return { label: `${a + 1}–${a + size}`, n: ss.length, y: ss.length ? ss.filter((s) => s.status === "up").length / ss.length : null,
-               votes: d3.median(ss, (s) => s.votes) };
+    const sorted = [...list].sort(byVotes);
+    const buckets = d3.range(10).map((k) => {
+      const ss = sorted.slice(Math.floor(sorted.length * k / 10), Math.floor(sorted.length * (k + 1) / 10));
+      return { label: k ? `${k * 10}–${k * 10 + 10}%` : "Top 10%", n: ss.length, y: ss.length ? ss.filter((s) => s.status === "up").length / ss.length : null,
+               votes: d3.median(ss, (s) => s.votes), lo: d3.min(ss, (s) => s.votes), hi: d3.max(ss, (s) => s.votes) };
     });
     const overall = list.filter((s) => s.status === "up").length / list.length;
     const m = { top: 18, right: 8, bottom: 40, left: 40 };
@@ -509,7 +521,7 @@
     const every = f.iw < 360 ? 2 : 1;
     f.g.append("g").attr("class", "axis").attr("transform", `translate(0,${f.ih})`)
       .call(d3.axisBottom(x).tickSizeOuter(0).tickFormat((d, i) => (i % every ? "" : d)));
-    f.g.append("text").attr("class", "label").attr("x", f.iw / 2).attr("y", f.ih + 34).attr("text-anchor", "middle").text("Rank within launch month");
+    f.g.append("text").attr("class", "label").attr("x", f.iw / 2).attr("y", f.ih + 34).attr("text-anchor", "middle").text("Share of sites by votes, most-upvoted first");
     const color = css("--s1");
     for (const b of buckets) {
       if (b.y == null) continue;
@@ -517,7 +529,7 @@
       f.g.append("path").attr("fill", color)
         .attr("d", `M${bx},${f.ih}v${-(h - r)}a${r},${r} 0 0 1 ${r},${-r}h${bw - 2 * r}a${r},${r} 0 0 1 ${r},${r}v${h - r}z`);
       f.g.append("rect").attr("class", "hit bar-hit").attr("x", bx - x.step() * 0.14).attr("width", x.step()).attr("y", 0).attr("height", f.ih)
-        .on("pointermove", (ev) => showTip(ev, { title: `Ranks ${b.label}`, rows: [{ color, value: pct(b.y), label: "alive today" }, { value: fmtInt(b.n), label: "sites checked" }, { value: fmtInt(Math.round(b.votes || 0)), label: "median votes" }] }))
+        .on("pointermove", (ev) => showTip(ev, { title: `${b.label} by votes`, rows: [{ color, value: pct(b.y), label: "alive today" }, { value: fmtInt(b.n), label: "sites checked" }, { value: `${fmtInt(b.lo || 0)}–${fmtInt(b.hi || 0)}`, label: "votes" }] }))
         .on("pointerleave", hideTip);
     }
     const first = buckets[0], last = [...buckets].reverse().find((b) => b.y != null);
@@ -525,7 +537,7 @@
       if (b && b.y != null) f.g.append("text").attr("class", "label strong").attr("x", x(b.label) + x.bandwidth() / 2).attr("y", y(b.y) - 6).attr("text-anchor", "middle").text(pct(b.y));
     }
     f.g.append("line").attr("stroke", css("--ink-2")).attr("stroke-width", 1).attr("x1", 0).attr("x2", f.iw).attr("y1", y(overall)).attr("y2", y(overall));
-    $("#popularity-sub").textContent = `Share alive today by rank within launch month. The line marks all ranks together (${pct(overall)}).`;
+    $("#popularity-sub").textContent = `Share alive today, from the most-upvoted tenth of sites to the least. The line marks all sites together (${pct(overall)}).`;
   }
 
   // ---------- Hosting ----------
@@ -551,7 +563,7 @@
     const from = Math.max(1, dayTs.length - 14);
     const events = [];
     for (const s of filtered()) for (const e of transitions(s.history, from)) events.push({ ...e, s });
-    events.sort((a, b) => b.i - a.i || a.s.rank - b.s.rank);
+    events.sort((a, b) => b.i - a.i || a.s.voteRank - b.s.voteRank);
     node.replaceChildren();
     if (!events.length) {
       node.append(el("li", "empty", dayTs.length > 1 ? "No status changes in the last 14 checks." : "Status changes show up here once there are two days of checks."));
@@ -586,9 +598,9 @@
     rows.sort((a, b) => {
       const va = val(a), vb = val(b);
       const c = typeof va === "string" ? va.localeCompare(vb) : va - vb;
-      return c * state.sort.dir || a.cohort.localeCompare(b.cohort) || a.rank - b.rank;
+      return c * state.sort.dir || a.voteRank - b.voteRank;
     });
-    $("#table-sub").textContent = `${fmtInt(rows.length)} sites${q ? " matching your search" : ""}. Rank is within the launch month.`;
+    $("#table-sub").textContent = `${fmtInt(rows.length)} sites${q ? " matching your search" : ""}, ranked by forum votes.`;
     document.querySelectorAll("#table th[data-sort]").forEach((th) => {
       th.setAttribute("aria-sort", th.dataset.sort === key ? (state.sort.dir > 0 ? "ascending" : "descending") : "none");
     });
@@ -597,7 +609,7 @@
     const colors = { U: css("--up"), B: css("--up"), P: css("--parked"), D: css("--down") };
     for (const s of rows.slice(0, state.limit)) {
       const tr = el("tr");
-      tr.append(el("td", "num", `#${s.rank}`));
+      tr.append(el("td", "num", `#${fmtInt(s.voteRank)}`));
       const site = el("td");
       const title = el("a", "site-title", s.title);
       title.href = s.post_url; title.target = "_blank"; title.rel = "noopener"; title.title = "Launch post";

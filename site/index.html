@@ -26,11 +26,11 @@
     </section>
 
     <nav class="filters" aria-label="Filters">
-      <div class="seg" role="radiogroup" aria-label="Popularity" data-filter="tier">
-        <span class="seg-label">Rank</span>
-        <button role="radio" data-value="10">Top 10</button>
-        <button role="radio" data-value="50">Top 50</button>
-        <button role="radio" data-value="100" aria-checked="true">Top 100</button>
+      <div class="seg" role="radiogroup" aria-label="Votes" data-filter="tier">
+        <span class="seg-label">Votes</span>
+        <button role="radio" data-value="10">Top 10%</button>
+        <button role="radio" data-value="50">Top 50%</button>
+        <button role="radio" data-value="100" aria-checked="true">All</button>
       </div>
       <div class="seg" role="radiogroup" aria-label="Category" data-filter="category">
         <span class="seg-label">Kind</span>
@@ -47,8 +47,8 @@
     </nav>
 
     <section class="headline">
-      <p class="big"><span id="hero-pct">–</span>%</p>
-      <div>
+      <div class="headline-text">
+        <p class="big"><span id="hero-pct">–</span>%</p>
         <p class="big-text">of sites still load <span id="hero-days">90</span> days after they were posted.</p>
         <label class="slider">
           <span class="sr">Days after launch</span>
@@ -56,6 +56,20 @@
           <span class="slider-scale"><span>1 day</span><span>6 months</span><span>1 year</span></span>
         </label>
         <p class="note" id="hero-note"></p>
+      </div>
+      <div class="headline-chart">
+        <div class="chart-bar">
+          <div class="legend" id="survival-legend"></div>
+          <div class="seg" role="radiogroup" aria-label="Split by" id="breakdown">
+            <span class="seg-label">Split by</span>
+            <button role="radio" data-value="tier" aria-checked="true">Votes</button>
+            <button role="radio" data-value="category">Kind</button>
+            <button role="radio" data-value="source">Source</button>
+            <button role="radio" data-value="hosting">Hosting</button>
+          </div>
+        </div>
+        <div class="chart" id="survival"></div>
+        <p class="note">Share of sites that loaded on the first check at or after each age. Click the chart to move the marker.</p>
       </div>
     </section>
 
@@ -90,23 +104,6 @@
       </div>
     </section>
 
-    <section class="block">
-      <header class="block-head">
-        <div>
-          <h2>Still online, by age</h2>
-          <p class="dek">Share of sites that loaded on the first check at or after each age.</p>
-        </div>
-        <div class="seg" role="radiogroup" aria-label="Split by" id="breakdown">
-          <span class="seg-label">Split by</span>
-          <button role="radio" data-value="tier" aria-checked="true">Rank</button>
-          <button role="radio" data-value="category">Kind</button>
-          <button role="radio" data-value="source">Source</button>
-          <button role="radio" data-value="hosting">Hosting</button>
-        </div>
-      </header>
-      <div class="legend" id="survival-legend"></div>
-      <div class="chart" id="survival" style="height:340px"></div>
-    </section>
 
     <div class="cols">
       <section class="block">
@@ -129,7 +126,7 @@
     <section class="block">
       <header class="block-head"><div>
         <h2>Every site</h2>
-        <p class="dek">One square per site, by launch month and rank. Click a square to open the site.</p>
+        <p class="dek">One square per site. Each row is a launch month, sorted by votes from left to right. Click a square to open the site.</p>
       </div></header>
       <div class="legend" id="wall-legend"></div>
       <div class="chart" id="wall"></div>
@@ -148,7 +145,7 @@
       <section class="block">
         <header class="block-head"><div>
           <h2>Does popularity help?</h2>
-          <p class="dek" id="popularity-sub">Share alive today, by rank within launch month.</p>
+          <p class="dek" id="popularity-sub">Share alive today, by vote count.</p>
         </div></header>
         <div class="chart" id="popularity" style="height:360px"></div>
       </section>
@@ -182,7 +179,7 @@
       <div class="table-wrap">
         <table id="table">
           <thead><tr>
-            <th data-sort="rank" class="num">Rank</th>
+            <th data-sort="voteRank" class="num">Rank</th>
             <th data-sort="title">Site</th>
             <th data-sort="source">Source</th>
             <th data-sort="category">Kind</th>
@@ -200,7 +197,7 @@
 
     <footer class="notes">
       <h2>Method</h2>
-      <p>Posts come from Show HN, r/SideProject, r/InternetIsBeautiful, r/IMadeThis, r/ClaudeAI and r/SaaS, starting October 2025. A post counts when it links to one standalone website. A site posted more than once counts once, from its first post, with its best vote count. Each launch month keeps its 100 most-upvoted sites.</p>
+      <p>Posts come from Show HN, r/SideProject, r/InternetIsBeautiful, r/IMadeThis, r/ClaudeAI and r/SaaS, starting October 2025. A post counts when it links to one standalone website. A site posted more than once counts once, from its first post, with its best vote count. Each launch month keeps its 100 most-upvoted sites. Vote filters and ranks compare forum votes across every site in view.</p>
       <p>A site is up when its front page answers, including when it turns away automated visitors (401, 403, 429 or a Cloudflare challenge) that a person would get past. It's parked when the domain shows a for-sale or parking page, and down on DNS failures, timeouts, TLS errors, 404 or 410, server errors, or a host saying the deployment was removed. Sites that look down are retried once before being recorded.</p>
       <p>Survival at age <em>x</em> uses each site's first check made at or after <em>x</em> days. Sites posted before checks began have only been checked at their current age, so for now the curve counts "down today" as "down then" and runs a little low. It firms up as daily checks accumulate.</p>
       <p class="fine"><a href="https://github.com/PigeonFlare/deploy-tracker">Source and data on GitHub</a></p>
