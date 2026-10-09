@@ -53,10 +53,11 @@
   "2026-09-16"
  ],
  "reddit_cursors": {
-  "SideProject": 1760298816,
-  "InternetIsBeautiful": 1766426750,
-  "IMadeThis": 1767001730,
-  "ClaudeAI": 1760254768,
-  "SaaS": 1759570328
- }
+  "SideProject": 1760639188,
+  "InternetIsBeautiful": 1771065914,
+  "IMadeThis": 1770899712,
+  "ClaudeAI": 1761458723,
+  "SaaS": 1760083736
+ },
+ "archive_limit": 100
 }
