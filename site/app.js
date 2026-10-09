@@ -626,6 +626,131 @@
     $("#more").hidden = rows.length <= state.limit;
   }
 
+
+  // ---------- Live replay ----------
+  const SHORT = { dns: "No DNS", timeout: "Timed out", refused: "Refused", connection: "No connection", tls: "Bad HTTPS",
+                  "http 404": "404", "http 5xx": "Server error", removed: "Removed", "redirect loop": "Redirect loop",
+                  "bad url": "Bad URL", "private address": "Private IP" };
+  const live = { entries: [], i: 0, timer: null, tally: null };
+  const clockFmt = d3.utcFormat("%H:%M:%S");
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function resultOf(e) {
+    const l = e.s.last || {};
+    if (e.ch === "U") return ["st-up", "Loaded", l.ms != null ? `${fmtInt(l.ms)} ms` : ""];
+    if (e.ch === "B") return ["st-up", "Bot wall", l.code ? String(l.code) : ""];
+    if (e.ch === "P") return ["st-parked", "Parked", ""];
+    return ["st-down", "Down", SHORT[l.reason] || (l.code ? String(l.code) : l.reason || "")];
+  }
+
+  function startLive() {
+    clearInterval(live.timer);
+    const last = dayTs.length - 1;
+    let before = 0;
+    const entries = [];
+    sites.forEach((s, idx) => {
+      for (let i = 0; i < Math.min(last, s.history.length); i++) if (s.history[i] !== ".") before++;
+      const ch = s.history[last];
+      if (ch && ch !== ".") entries.push({ s, ch, at: s.last && s.last.at, idx });
+    });
+    entries.sort((a, b) => (a.at || 0) - (b.at || 0) || a.idx - b.idx);
+    entries.forEach((e, i) => { e.seq = before + i + 1; });
+    live.entries = entries; live.i = 0;
+    live.tally = { checked: 0, up: 0, walled: 0, parked: 0, down: 0 };
+    $("#register").replaceChildren();
+    const gen = new Date(data.generated_at);
+    const today = d3.utcFormat("%Y-%m-%d")(new Date()) === data.days[last];
+    $("#live-title").textContent = today ? "Today's check" : `Latest check, ${d3.utcFormat("%b %-d")(gen)}`;
+    const timed = entries.filter((e) => e.at);
+    live.span = timed.length ? [timed[0].at, timed[timed.length - 1].at] : null;
+    $("#live-dek").textContent = "Replaying the latest daily check, one site at a time, in the order they were visited.";
+    $("#live-skip").hidden = false;
+    if (reduceMotion || !entries.length) { finishLive(); return; }
+    live.timer = setInterval(() => stepLive(1), 150);
+  }
+
+  function addRow(e, fresh) {
+    const li = el("li", fresh ? "fresh" : null);
+    const [cls, word, extra] = resultOf(e);
+    li.append(el("span", "t", e.at ? clockFmt(new Date(e.at * 1000)) : "–"), el("span", "n", "№ " + fmtInt(e.seq)));
+    const a = el("a", null, e.s.domain); a.href = e.s.url; a.target = "_blank"; a.rel = "noopener"; a.title = e.s.title;
+    const r = el("span", "r"); r.append(el("span", cls, word));
+    if (extra) r.append(el("span", null, " · " + extra));
+    li.append(a, r);
+    const list = $("#register");
+    list.prepend(li);
+    while (list.children.length > 16) list.lastChild.remove();
+  }
+
+  function count(e) {
+    const t = live.tally;
+    t.checked++;
+    if (e.ch === "U") t.up++; else if (e.ch === "B") t.walled++; else if (e.ch === "P") t.parked++; else t.down++;
+  }
+
+  function paintTally(e) {
+    const t = live.tally;
+    $("#tally-checked").textContent = fmtInt(t.checked);
+    $("#tally-up").textContent = fmtInt(t.up);
+    $("#tally-walled").textContent = fmtInt(t.walled);
+    $("#tally-parked").textContent = fmtInt(t.parked);
+    $("#tally-down").textContent = fmtInt(t.down);
+    const at = e && e.at ? e.at : Date.parse(data.generated_at) / 1000;
+    $("#live-clock").textContent = clockFmt(new Date(at * 1000));
+    $("#live-progress").textContent = `${fmtInt(t.checked)} of ${fmtInt(live.entries.length)} sites`;
+  }
+
+  function stepLive(n) {
+    let e;
+    for (let k = 0; k < n && live.i < live.entries.length; k++) {
+      e = live.entries[live.i++];
+      count(e); addRow(e, true);
+    }
+    paintTally(e);
+    if (live.i >= live.entries.length) finishLive();
+  }
+
+  function finishLive() {
+    clearInterval(live.timer);
+    while (live.i < live.entries.length) count(live.entries[live.i++]);
+    $("#register").replaceChildren();
+    live.entries.slice(-16).forEach((e) => addRow(e, false));
+    paintTally(live.entries[live.entries.length - 1]);
+    $("#live-skip").hidden = true;
+    const span = live.span;
+    $("#live-dek").textContent = span
+      ? `All ${fmtInt(live.entries.length)} sites were visited between ${d3.utcFormat("%H:%M")(new Date(span[0] * 1000))} and ${d3.utcFormat("%H:%M")(new Date(span[1] * 1000))} UTC.`
+      : `All ${fmtInt(live.entries.length)} sites checked.`;
+    $("#live-progress").textContent = "Done.";
+  }
+  $("#live-skip").addEventListener("click", finishLive);
+
+  const CRON = { h: 6, m: 41 };
+  function tick() {
+    if (!data) return;
+    const now = Date.now();
+    const next = new Date(now);
+    next.setUTCHours(CRON.h, CRON.m, 0, 0);
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    const today = d3.utcFormat("%Y-%m-%d")(new Date(now));
+    const ranToday = data.days[data.days.length - 1] === today;
+    const due = new Date(now); due.setUTCHours(CRON.h, CRON.m, 0, 0);
+    if (!ranToday && now >= due) {
+      $("#next-check").textContent = "Running now";
+    } else {
+      const left = Math.floor((next - now) / 1000);
+      $("#next-check").textContent = `${Math.floor(left / 3600)}h ${String(Math.floor(left / 60) % 60).padStart(2, "0")}m ${String(left % 60).padStart(2, "0")}s`;
+    }
+    const nowS = now / 1000;
+    let hours = 0;
+    for (const s of sites) if (s.status === "up") hours += Math.max(0, nowS - s.created) / 3600;
+    $("#site-hours").textContent = fmtInt(Math.floor(hours));
+    const ago = Math.max(0, Math.floor(nowS - Date.parse(data.generated_at) / 1000));
+    $("#checked").textContent = ago < 3600 ? `Checked ${Math.max(1, Math.floor(ago / 60))}m ago`
+      : `Checked ${Math.floor(ago / 3600)}h ${Math.floor(ago / 60) % 60}m ago`;
+  }
+  setInterval(tick, 250);
+
   // ---------- Wiring ----------
   function renderAll() {
     if (!data) return;
@@ -672,24 +797,33 @@
     resizeTimer = setTimeout(renderAll, 120);
   }).observe($("main"));
 
-  fetch("data/tracker.json", { cache: "no-cache" })
-    .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then((raw) => {
-      prepare(raw);
-      const links = $("#source-links");
-      raw.sources.forEach((src, i) => {
-        if (i) links.append(document.createTextNode(i === raw.sources.length - 1 ? " and " : ", "));
-        const a = el("a", null, src.name); a.href = src.url; a.target = "_blank"; a.rel = "noopener";
-        links.append(a);
-        const opt = el("option", null, src.name); opt.value = src.name;
-        $("#source-filter").append(opt);
-      });
-      const when = new Date(raw.generated_at);
-      $("#checked").textContent = `Checked ${when.toLocaleString("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
-      renderAll();
-    })
-    .catch(() => {
-      $("#checked").textContent = "No data yet";
-      document.querySelectorAll(".chart").forEach((n) => emptyState(n, "The first daily check hasn't run yet."));
+  function load(raw) {
+    prepare(raw);
+    const links = $("#source-links");
+    links.replaceChildren();
+    const select = $("#source-filter");
+    select.querySelectorAll("option:not([value=all])").forEach((o) => o.remove());
+    raw.sources.forEach((src, i) => {
+      if (i) links.append(document.createTextNode(i === raw.sources.length - 1 ? " and " : ", "));
+      const a = el("a", null, src.name); a.href = src.url; a.target = "_blank"; a.rel = "noopener";
+      links.append(a);
+      const opt = el("option", null, src.name); opt.value = src.name;
+      select.append(opt);
     });
+    select.value = state.source;
+    renderAll();
+    startLive();
+    tick();
+  }
+
+  const getData = () => fetch("data/tracker.json", { cache: "no-cache" })
+    .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+  getData().then(load).catch(() => {
+    $("#checked").textContent = "No data yet";
+    document.querySelectorAll(".chart").forEach((n) => emptyState(n, "The first daily check hasn't run yet."));
+  });
+  setInterval(() => {
+    if (!data || document.hidden) return;
+    getData().then((raw) => { if (raw.generated_at !== data.generated_at) load(raw); }).catch(() => {});
+  }, 5 * 60 * 1000);
 })();

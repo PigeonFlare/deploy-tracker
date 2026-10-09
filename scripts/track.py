@@ -433,16 +433,18 @@ def probe(url):
 def check_all(sites, workers=48):
     def run(s):
         try:
-            return probe(s["url"])
+            status, info = probe(s["url"])
         except Exception as e:
-            return DOWN, {"reason": _reason(e)}
+            status, info = DOWN, {"reason": _reason(e)}
+        info["at"] = int(time.time())
+        return status, info
 
     results = {}
     with ThreadPoolExecutor(workers) as ex:
         futures = {ex.submit(run, s): s["id"] for s in sites}
         wait(futures, timeout=PROBE_DEADLINE * 20)
         for f, sid in futures.items():
-            results[sid] = f.result() if f.done() else (DOWN, {"reason": "timeout"})
+            results[sid] = f.result() if f.done() else (DOWN, {"reason": "timeout", "at": int(time.time())})
     # Give anything that looked down a second chance, so a brief blip isn't logged as an outage.
     retry = [s for s in sites if results[s["id"]][0] == DOWN]
     if retry:
@@ -458,7 +460,7 @@ def check_all(sites, workers=48):
 
 # --- Output -------------------------------------------------------------------------
 
-def update_tracker(tracked, results, today, previous):
+def update_tracker(tracked, results, today, previous, started=None):
     days = list(previous.get("days") or [])
     old = {s["id"]: s for s in previous.get("sites") or []}
     if not days or days[-1] != today:
@@ -483,7 +485,8 @@ def update_tracker(tracked, results, today, previous):
             entry["last_up"] = before["last_up"]
         out.append(entry)
     out.sort(key=lambda s: (s["cohort"], s["rank"]))
-    return {"generated_at": now_utc().isoformat(timespec="seconds"), "start": START.date().isoformat(),
+    return {"generated_at": now_utc().isoformat(timespec="seconds"), "checks_started": started,
+            "start": START.date().isoformat(),
             "top_n": TOP_N, "sources": SOURCES, "days": days, "sites": out}
 
 
@@ -515,8 +518,9 @@ def main():
     if not tracked:
         sys.exit("no posts collected; leaving the tracker unchanged")
     print(f"checking {len(tracked)} sites across {len({s['cohort'] for s in tracked})} launch months")
+    started = now_utc().isoformat(timespec="seconds")
     results = check_all(tracked)
-    data = update_tracker(tracked, results, now.date().isoformat(), previous)
+    data = update_tracker(tracked, results, now.date().isoformat(), previous, started)
     save(OUT, data)
     counts = {}
     for s in data["sites"]:

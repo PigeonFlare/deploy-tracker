@@ -66,6 +66,30 @@
       <div><dt>Outages, last 30 days</dt><dd id="kpi-outages">–</dd><dd class="sub" id="kpi-outages-foot"></dd></div>
     </dl>
 
+    <section class="live" aria-labelledby="live-title">
+      <div class="live-side">
+        <h2 id="live-title">This morning's check</h2>
+        <p class="dek" id="live-dek">Every site, visited one by one.</p>
+        <p class="clock"><span id="live-clock">--:--:--</span> <span class="clock-tz">UTC</span></p>
+        <dl class="tally">
+          <div><dt>Checked</dt><dd id="tally-checked">0</dd></div>
+          <div><dt>Loaded</dt><dd class="st-up" id="tally-up">0</dd></div>
+          <div><dt>Blocked bots</dt><dd class="st-up" id="tally-walled">0</dd></div>
+          <div><dt>Parked</dt><dd class="st-parked" id="tally-parked">0</dd></div>
+          <div><dt>Down</dt><dd class="st-down" id="tally-down">0</dd></div>
+        </dl>
+        <p class="live-foot"><span id="live-progress"></span> <button class="text-btn" id="live-skip" type="button">Skip to the end</button></p>
+        <dl class="counters">
+          <div><dt>Next check due in</dt><dd id="next-check">–</dd></div>
+          <div><dt>Hours online, all sites combined</dt><dd id="site-hours">–</dd></div>
+        </dl>
+      </div>
+      <div class="register-wrap">
+        <div class="register-head"><span>Time</span><span>Check</span><span>Site</span><span>Result</span></div>
+        <ol class="register" id="register" aria-live="off"></ol>
+      </div>
+    </section>
+
     <section class="block">
       <header class="block-head">
         <div>
