@@ -45,9 +45,15 @@
     const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
     root.dataset.theme = dark ? "light" : "dark";
     try { localStorage.setItem("theme", root.dataset.theme); } catch (e) { /* ignore */ }
+    themeLabel();
     renderAll();
   });
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => renderAll());
+  function themeLabel() {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    $("#theme").textContent = dark ? "Light mode" : "Dark mode";
+  }
+  themeLabel();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { themeLabel(); renderAll(); });
 
   // ---------- Tooltip ----------
   const tip = $("#tooltip");
@@ -157,9 +163,9 @@
     switch (state.breakdown) {
       case "tier":
         return [
-          { label: "Top 10%", color: css("--t10"), list: base.filter((s) => s.rank <= 10) },
-          { label: "Top 50%", color: css("--t50"), list: base.filter((s) => s.rank <= 50) },
-          { label: "Top 100%", color: css("--t100"), list: base },
+          { label: "Top 10", color: css("--t10"), list: base.filter((s) => s.rank <= 10) },
+          { label: "Top 50", color: css("--t50"), list: base.filter((s) => s.rank <= 50) },
+          { label: "Top 100", color: css("--t100"), list: base },
         ];
       case "category":
         return ["apps", "games", "other"].map((c, i) => ({ label: CATEGORY_LABEL[c], color: css(`--s${i + 1}`), list: base.filter((s) => s.category === c) }));
@@ -554,17 +560,18 @@
     const fmt = d3.utcFormat("%b %-d");
     for (const e of events.slice(0, 80)) {
       const li = el("li");
-      const dot = el("span", "dot", e.kind === "down" ? "↓" : "↑");
-      dot.style.background = e.kind === "down" ? (e.ch === "P" ? css("--parked") : css("--down")) : css("--up");
-      dot.setAttribute("aria-label", e.kind === "down" ? "went down" : "recovered");
       const body = el("div");
       const a = el("a", "site", e.s.title);
       a.href = e.s.url; a.target = "_blank"; a.rel = "noopener";
-      const detail = e.kind === "down"
-        ? (e.ch === "P" ? "now parked" : "went down") + (e.s.status !== "up" && e.s.reason ? ` · ${REASONS[e.s.reason] || e.s.reason}` : "")
-        : "back up";
-      body.append(a, el("div", "detail", `${e.s.domain} · ${detail}`));
-      li.append(dot, body, el("span", "when", fmt(new Date(dayTs[e.i] * 1000))));
+      const detail = el("div", "detail", `${e.s.domain} · `);
+      if (e.kind === "down") {
+        detail.append(e.ch === "P" ? el("span", "st-parked", "Parked") : el("span", "st-down", "Went down"));
+        if (e.ch !== "P" && e.s.status !== "up" && e.s.reason) detail.append(` · ${REASONS[e.s.reason] || e.s.reason}`);
+      } else {
+        detail.append(el("span", "st-up", "Back up"));
+      }
+      body.append(a, detail);
+      li.append(el("span", "when", fmt(new Date(dayTs[e.i] * 1000))), body);
       node.append(li);
     }
   }
@@ -599,7 +606,7 @@
       link.href = s.url; link.target = "_blank"; link.rel = "noopener";
       dom.append(link, document.createTextNode(` · ${monthLabel(s.cohort, true)}`));
       site.append(title, dom);
-      tr.append(site, el("td", null, s.source), el("td", null, CATEGORY_LABEL[s.category] || s.category),
+      tr.append(site, el("td", null, s.source), el("td", "nowrap", CATEGORY_LABEL[s.category] || s.category),
         el("td", "num", fmtInt(s.votes)), el("td", "num", s.age >= 60 ? `${Math.round(s.age / 30.4)}mo` : `${s.age}d`),
         el("td", "num", s.uptime == null ? "–" : pct(s.uptime)));
       const strip = el("div", "strip");
@@ -611,9 +618,9 @@
       }
       strip.setAttribute("aria-label", `Last 30 checks: ${hist.replace(/\./g, "").length} checked`);
       const td = el("td"); td.append(strip); tr.append(td);
-      const pill = el("span", `pill ${s.status}`, statusText(s));
-      if (s.status !== "up" && s.reason && s.reason !== "parked") pill.append(el("span", null, `· ${REASONS[s.reason] || s.reason}`));
-      const tdp = el("td"); tdp.append(pill); tr.append(tdp);
+      const st = el("span", `status st-${s.status}`, statusText(s));
+      if (s.status !== "up" && s.reason && s.reason !== "parked") st.append(el("span", null, ` · ${REASONS[s.reason] || s.reason}`));
+      const tdp = el("td"); tdp.append(st); tr.append(tdp);
       tbody.append(tr);
     }
     $("#more").hidden = rows.length <= state.limit;
