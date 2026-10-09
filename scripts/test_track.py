@@ -96,7 +96,9 @@ class RedditTest(unittest.TestCase):
     def test_subreddits_take_turns_and_resume(self):
         calls, slowed = [], []
 
-        def fake_get(params, left):
+        def fake_get(params, left, path="search"):
+            if path == "ids":
+                return [{"id": i, "selftext": f"try it at https://{i}.app"} for i in params["ids"].split(",")]
             if left[0] <= 0:
                 raise track.ArchivePaused("budget")
             if len(calls) == 3 and not slowed:
@@ -106,7 +108,11 @@ class RedditTest(unittest.TestCase):
             calls.append(params["subreddit"])
             t = params["after"] + 60
             return [{"id": f"x{t}", "title": "I made a site", "url": f"https://s{t}.com/", "score": 50,
-                     "created_utc": t}] if t < 1759400000 else []
+                     "created_utc": t},
+                    {"id": f"y{t}", "title": "I made this", "url": f"https://www.reddit.com/r/x/comments/y{t}/",
+                     "score": 50, "created_utc": t},
+                    {"id": f"z{t}", "title": "meh", "url": f"https://z{t}.com/", "score": 2, "created_utc": t},
+                    ] if t < 1759400000 else []
 
         state, posts = {}, {}
         now = track.dt.datetime(2026, 10, 9, tzinfo=track.dt.timezone.utc)
@@ -115,8 +121,8 @@ class RedditTest(unittest.TestCase):
         self.assertEqual(calls[:5], track.SUBREDDITS)
         self.assertEqual(len(calls), 10)
         self.assertEqual(len(state["reddit_cursors"]), 5)
-        self.assertEqual(len(posts), 10)
-        self.assertEqual(state["archive_limit"], 100)
+        self.assertEqual(len(posts), 20)
+        self.assertIn("https://y1759276860.app/", {p["url"] for p in posts.values()})
 
 
 class TrackerTest(unittest.TestCase):

@@ -44,13 +44,13 @@ MAKER_ONLY = {"ClaudeAI", "SaaS"}
 SOURCES = [{"name": "Show HN", "url": "https://news.ycombinator.com/show"}] + [
     {"name": f"r/{s}", "url": f"https://www.reddit.com/r/{s}/"} for s in SUBREDDITS]
 
-ARCHIVE_API = "https://arctic-shift.photon-reddit.com/api/posts/search"
+ARCHIVE_API = "https://arctic-shift.photon-reddit.com/api/posts"
 ARCHIVE_BUDGET = 600
 ARCHIVE_MINUTES = 18
 ARCHIVE_STRIKES = 6
 ARCHIVE_PAUSE = 2
 ARCHIVE_SETTLE = 36 * 3600  # the archive re-reads a post's score about 36 hours after it's posted
-ARCHIVE_FIELDS = "id,title,url,selftext,score,created_utc,over_18"
+ARCHIVE_FIELDS = "id,title,url,score,created_utc,over_18"
 
 FREE_HOSTS = ("vercel.app", "netlify.app", "github.io", "pages.dev", "workers.dev", "onrender.com",
               "herokuapp.com", "fly.dev", "replit.app", "repl.co", "glitch.me", "web.app", "firebaseapp.com",
@@ -170,13 +170,13 @@ class ArchivePaused(Exception):
     pass
 
 
-def archive_get(params, budget):
+def archive_get(params, budget, path="search"):
     if budget[0] <= 0:
         raise ArchivePaused("request budget spent")
     budget[0] -= 1
     time.sleep(ARCHIVE_PAUSE)
     try:
-        data = json.loads(fetch(f"{ARCHIVE_API}?{urllib.parse.urlencode(params)}", timeout=60))
+        data = json.loads(fetch(f"{ARCHIVE_API}/{path}?{urllib.parse.urlencode(params)}", timeout=60))
     except urllib.error.HTTPError as e:
         if e.code in (422, 429, 503):
             raise ArchivePaused(f"HTTP {e.code}")
@@ -194,7 +194,7 @@ def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET, minutes=ARCHIVE_MIN
     cursors = state.setdefault("reddit_cursors", {})
     left = [budget]
     new = 0
-    limit = state.get("archive_limit", "auto")
+    limit = "auto"
     stop = int(now.timestamp() - ARCHIVE_SETTLE)
     deadline = time.monotonic() + minutes * 60
     strikes = 0
@@ -213,24 +213,28 @@ def collect_reddit(posts, state, now, budget=ARCHIVE_BUDGET, minutes=ARCHIVE_MIN
                             strikes += 1
                             if left[0] <= 0 or strikes > ARCHIVE_STRIKES:
                                 raise
-                            limit = state["archive_limit"] = 100
+                            limit = 100
                             print(f"Reddit archive: {e}; waiting {30 * strikes}s")
                             time.sleep(30 * strikes)
                     strikes = 0
                 except urllib.error.HTTPError as e:
                     if e.code == 400 and limit != 100:
-                        limit = state["archive_limit"] = 100
+                        limit = 100
                         continue
                     print(f"warn: r/{sub} archive: {e}", file=sys.stderr)
                     pending.remove(sub)
                     continue
-                for p in batch:
+                keep = [p for p in batch if not p.get("over_18") and isinstance(p.get("score"), int)
+                        and p["score"] >= MIN_VOTES
+                        and not (sub in MAKER_ONLY and not MAKER_TITLE.search(p.get("title") or ""))]
+                text = [p["id"] for p in keep if not site_url(p.get("url") or "", p.get("title") or "")]
+                bodies = {}
+                for i in range(0, len(text), 100):
+                    for t in archive_get({"ids": ",".join(text[i:i + 100]), "fields": "id,selftext"}, left, "ids"):
+                        bodies[t.get("id")] = t.get("selftext") or ""
+                for p in keep:
                     title = p.get("title") or ""
-                    if p.get("over_18") or (sub in MAKER_ONLY and not MAKER_TITLE.search(title)):
-                        continue
-                    if not isinstance(p.get("score"), int) or p["score"] < MIN_VOTES:
-                        continue
-                    url = pick_site(title, p.get("url"), URL_RE.findall(p.get("selftext") or ""))
+                    url = pick_site(title, p.get("url"), URL_RE.findall(bodies.get(p["id"], "")))
                     new += add_post(posts, f"https://www.reddit.com/r/{sub}/comments/{p['id']}/", url, title,
                                     p["score"], f"r/{sub}", p.get("created_utc"))
                 if not batch:
