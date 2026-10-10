@@ -109,14 +109,14 @@
                age: Math.max(0, Math.floor((nowTs - s.created) / DAY)), hostKey: g.key, free: g.free,
                reason: (s.last && s.last.reason) || null };
     });
-    sites.filter((s) => s.rank <= raw.top_n).sort(byVotes).forEach((s, i) => { s.voteRank = i + 1; });
+    sites.filter((s) => s.rank <= raw.top_n && s.age <= 365).sort(byVotes).forEach((s, i) => { s.voteRank = i + 1; });
   }
 
   const byVotes = (a, b) => b.votes - a.votes || a.created - b.created;
   const topShare = (list, share) => [...list].sort(byVotes).slice(0, Math.max(1, Math.ceil(list.length * share / 100)));
 
   function filtered({ ignoreTier = false } = {}) {
-    const base = sites.filter((s) => s.rank <= data.top_n
+    const base = sites.filter((s) => s.rank <= data.top_n && s.age <= 365
       && (state.category === "all" || s.category === state.category)
       && (state.source === "all" || s.source === state.source));
     return ignoreTier || state.tier >= 100 || !base.length ? base : topShare(base, state.tier);
@@ -426,7 +426,7 @@
     const node = $("#wall");
     const colors = { up: css("--up"), parked: css("--parked"), down: css("--down"), none: css("--none") };
     legend($("#wall-legend"), [["Up", colors.up], ["Parked", colors.parked], ["Down", colors.down], ["Filtered out", colors.none]].map(([label, color]) => ({ label, color })), true);
-    const all = sites.filter((s) => s.rank <= data.top_n);
+    const all = sites.filter((s) => s.rank <= data.top_n && s.age <= 365);
     if (!all.length) return emptyState(node, "No sites yet.");
     const keep = new Set(filtered());
     const cohorts = [...new Set(all.map((s) => s.cohort))].sort();
@@ -677,26 +677,18 @@
   }
 
 
-  // ---------- Still being updated ----------
-  // At age x: of sites at least x days old with a known change date, the share last changed x or more days after launch.
-  function updateCurve(list, maxAge) {
-    const known = list.filter((s) => s.updated);
+  // ---------- Recently updated ----------
+  // For a window of w days: the share of sites with a known change date whose last change came within w days of today.
+  function recencyCurve(list) {
+    const lags = list.filter((s) => s.updated).map((s) => Math.max(0, (nowTs - s.updated) / DAY)).sort((a, b) => a - b);
     const out = [];
-    for (let x = 0; x <= maxAge; x++) {
-      let n = 0, k = 0;
-      for (const s of known) {
-        if (s.age < x) continue;
-        n++;
-        if ((s.updated - s.created) / DAY >= x) k++;
-      }
-      out.push({ x, y: n ? k / n : null, n });
-    }
+    for (let w = 1; w <= 365; w++) out.push({ x: w, y: lags.length ? d3.bisectRight(lags, w) / lags.length : null, n: lags.length });
     return out;
   }
 
   function renderUpdates() {
     const node = $("#updates");
-    const series = breakdownSeries().filter((s) => s.list.some((d) => d.updated));
+    const series = breakdownSeries().filter((s) => s.list.filter((d) => d.updated).length >= LINE_MIN_N);
     const all = filtered({ ignoreTier: state.breakdown === "tier" });
     const known = all.filter((s) => s.updated);
     if (known.length < LINE_MIN_N) {
@@ -705,62 +697,51 @@
       $("#updates-note").textContent = "";
       return emptyState(node, "Change dates are still being collected for these sites.");
     }
-    const maxAge = Math.max(30, maxAgeOf(all));
-    series.forEach((s) => { s.points = updateCurve(s.list, maxAge); });
-    const online = survival(all, maxAge);
-    const overall = updateCurve(all, maxAge);
-    const half = overall.find((d) => d.n >= LINE_MIN_N && d.y != null && d.y < 0.5);
-    const lastOk = [...overall].reverse().find((d) => d.n >= LINE_MIN_N);
+    series.forEach((s) => { s.points = recencyCurve(s.list); });
+    const overall = recencyCurve(all);
+    const at = (w) => overall[w - 1].y;
     const lede = $("#update-lede");
-    lede.replaceChildren();
-    if (half) {
-      lede.append("Half of sites stop changing within ", el("strong", null, `${half.x} days`), " of launch.");
-    } else if (lastOk) {
-      lede.append("More than half of sites were still changing ", el("strong", null, `${lastOk.x} days`), " after launch.");
-    }
-    const recent = known.filter((s) => nowTs - s.updated < 30 * DAY).length;
-    $("#updates-note").textContent = `Based on ${fmtInt(known.length)} of ${fmtInt(all.length)} sites with a known change date. ${pct(recent / known.length)} of them changed in the last 30 days.`;
-    const refColor = css("--ink-2");
-    legend($("#updates-legend"), [...series, { label: "Still online", color: refColor }]);
+    lede.replaceChildren(el("strong", null, pct(at(30))), " of sites changed in the last month, and ",
+      el("strong", null, pct(at(7))), " in the last week.");
+    $("#updates-note").textContent = `Based on ${fmtInt(known.length)} of ${fmtInt(all.length)} sites with a known change date.`;
+    legend($("#updates-legend"), series);
     const labelled = series.length <= 4 && node.clientWidth > 520;
     const m = { top: 12, right: labelled ? 92 : 16, bottom: 30, left: 40 };
     const f = frame(node, node.clientWidth < 520 ? 260 : 320, m);
-    const x = d3.scaleLinear().domain([0, maxAge]).range([0, f.iw]);
+    const x = d3.scaleLog().domain([365, 1]).range([0, f.iw]);
     const y = d3.scaleLinear().domain([0, 1]).range([f.ih, 0]);
     f.g.append("g").attr("class", "gridlines").call(d3.axisLeft(y).ticks(5).tickSize(-f.iw).tickFormat(""));
     f.g.append("g").attr("class", "axis").call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".0%")).tickSize(0).tickPadding(8)).select(".domain").remove();
-    const xt = (f.iw < 500 ? [0, 90, 180, 270, 365] : [0, 30, 60, 90, 120, 180, 240, 300, 365]).filter((t) => t <= maxAge);
+    const names = { 365: "1 year", 180: "6 months", 90: "3 months", 30: "1 month", 14: "2 weeks", 7: "1 week", 3: "3 days", 1: "1 day" };
+    const xt = f.iw < 500 ? [365, 90, 30, 7, 1] : [365, 180, 90, 30, 14, 7, 3, 1];
     f.g.append("g").attr("class", "axis").attr("transform", `translate(0,${f.ih})`)
-      .call(d3.axisBottom(x).tickValues(xt).tickFormat((d) => d + "d").tickSizeOuter(0));
-    const line = d3.line().defined((d) => d.n >= LINE_MIN_N && d.y != null).x((d) => x(d.x)).y((d) => y(d.y)).curve(d3.curveMonotoneX);
-    f.g.append("path").attr("fill", "none").attr("stroke", refColor).attr("stroke-width", 1.5).attr("stroke-dasharray", "4 4").attr("d", line(online));
-    if (half) {
-      f.g.append("line").attr("class", "marker-rule").attr("x1", x(half.x)).attr("x2", x(half.x)).attr("y1", y(0.5)).attr("y2", f.ih);
-      f.g.append("text").attr("class", "label").attr("x", x(half.x) + 5).attr("y", f.ih - 6).text(`${half.x}d`);
+      .call(d3.axisBottom(x).tickValues(xt).tickFormat((d) => names[d] || `${d} days`).tickSizeOuter(0));
+    const line = d3.line().defined((d) => d.y != null).x((d) => x(d.x)).y((d) => y(d.y)).curve(d3.curveMonotoneX);
+    for (const w of [30, 7]) {
+      f.g.append("line").attr("class", "marker-rule").attr("x1", x(w)).attr("x2", x(w)).attr("y1", y(at(w))).attr("y2", f.ih);
     }
     for (const s of series) {
-      f.g.append("path").attr("fill", "none").attr("stroke", s.color).attr("stroke-width", 2)
+      const path = f.g.append("path").attr("fill", "none").attr("stroke", s.color).attr("stroke-width", 2)
         .attr("stroke-linejoin", "round").attr("stroke-linecap", "round").attr("d", line(s.points));
+      if (intro) {
+        const len = path.node().getTotalLength();
+        path.attr("stroke-dasharray", `${len} ${len}`).attr("stroke-dashoffset", len)
+          .transition().delay(700 + series.indexOf(s) * 160).duration(1600).ease(d3.easeCubicInOut)
+          .attr("stroke-dashoffset", 0).on("end", () => path.attr("stroke-dasharray", null));
+      }
     }
     if (labelled) {
-      const ends = series.map((s) => {
-        const p = [...s.points].reverse().find((d) => d.n >= LINE_MIN_N && d.y != null);
-        return p && { s, p, ty: y(p.y) };
-      }).filter(Boolean).sort((a, b) => a.ty - b.ty);
+      const ends = series.map((s) => ({ s, p: s.points[0], ty: y(s.points[0].y) })).sort((a, b) => a.ty - b.ty);
       for (let i = 1; i < ends.length; i++) ends[i].ty = Math.max(ends[i].ty, ends[i - 1].ty + 14);
-      for (const e of ends) f.g.append("text").attr("class", "label strong").attr("x", x(e.p.x) + 8).attr("y", e.ty + 4).text(`${e.s.label} ${pct(e.p.y)}`);
+      for (const e of ends) f.g.append("text").attr("class", "label strong").attr("x", f.iw + 8).attr("y", e.ty + 4).text(`${e.s.label} ${pct(e.p.y)}`);
     }
     const cross = f.g.append("line").attr("class", "crosshair").attr("y1", 0).attr("y2", f.ih).style("opacity", 0);
     f.g.append("rect").attr("class", "hit").attr("width", f.iw).attr("height", f.ih)
       .on("pointermove", (ev) => {
-        const xi = Math.max(0, Math.min(maxAge, Math.round(x.invert(d3.pointer(ev)[0]))));
-        cross.attr("x1", x(xi)).attr("x2", x(xi)).style("opacity", 1);
-        const rows = series.map((s) => {
-          const p = s.points[xi];
-          return { color: s.color, value: p.n >= LINE_MIN_N && p.y != null ? pct(p.y) : "–", label: `${s.label} · ${p.n} sites` };
-        });
-        rows.push({ color: refColor, value: pct(online[xi].y), label: "still online" });
-        showTip(ev, { title: `Still changing ${xi} days after launch`, rows });
+        const w = Math.max(1, Math.min(365, Math.round(x.invert(d3.pointer(ev)[0]))));
+        cross.attr("x1", x(w)).attr("x2", x(w)).style("opacity", 1);
+        const rows = series.map((s) => ({ color: s.color, value: pct(s.points[w - 1].y), label: `${s.label} · ${s.points[w - 1].n} sites` }));
+        showTip(ev, { title: `Changed in the last ${w === 1 ? "day" : w + " days"}`, rows });
       })
       .on("pointerleave", () => { cross.style("opacity", 0); hideTip(); });
   }

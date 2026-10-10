@@ -570,10 +570,28 @@ def update_tracker(tracked, results, today, previous, started=None, archive=None
                                    "created", "cohort", "rank")}
         entry.update(category=s.get("category") or auto, category_auto=auto, hosting=hosting(s["domain"]),
                      history=history, last=last)
-        entry["fp"] = fp or before.get("fp")
+        # A new fingerprint only counts once a later day's check sees it again; pages that keep
+        # flipping (rotating content, per-visit markup) are marked noisy and their fingerprints ignored.
+        prev, pending, noisy = before.get("fp"), before.get("fp_new"), before.get("noisy", 0)
+        today_ts = int(dt.datetime.fromisoformat(today).replace(tzinfo=dt.timezone.utc).timestamp())
         changed = before.get("changed")
-        if fp and before.get("fp") and fp != before["fp"]:
-            changed = int(dt.datetime.fromisoformat(today).replace(tzinfo=dt.timezone.utc).timestamp())
+        entry["fp"] = prev or fp
+        if fp and prev and fp != prev:
+            if pending and fp == pending[0]:
+                if today_ts > pending[1]:
+                    changed, entry["fp"], pending = pending[1], fp, None
+            else:
+                if pending:
+                    noisy += 1
+                pending = [fp, today_ts]
+        elif fp and pending:
+            noisy, pending = noisy + 1, None
+        if pending:
+            entry["fp_new"] = pending
+        if noisy:
+            entry["noisy"] = noisy
+        if noisy >= 2:
+            changed = None
         if changed:
             entry["changed"] = changed
         lm = lm or before.get("lm")

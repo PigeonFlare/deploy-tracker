@@ -191,11 +191,26 @@ class ChangeTest(unittest.TestCase):
         self.assertNotIn("changed", day1["sites"][0])
         day2 = track.update_tracker([site], {"a.com": ("U", {"fp": "y"})}, "2026-10-10", day1,
                                     archive={"a.com": {"last": 1780000000}})
-        s = day2["sites"][0]
+        self.assertNotIn("changed", day2["sites"][0])
+        day3 = track.update_tracker([site], {"a.com": ("U", {"fp": "y"})}, "2026-10-11", day2,
+                                    archive={"a.com": {"last": 1780000000}})
+        s = day3["sites"][0]
         self.assertEqual(s["fp"], "y")
         self.assertEqual(s["changed"], 1791590400)
         self.assertEqual(s["updated"], 1791590400)
         self.assertEqual(s["lm"], 1770000000)
+
+    def test_flipping_pages_are_ignored(self):
+        site = {"id": "a.com", "url": "https://a.com/", "domain": "a.com", "title": "tool", "votes": 20,
+                "source": "Show HN", "sources": ["Show HN"], "post_url": "p", "created": 1760000000,
+                "cohort": "2025-10", "rank": 1}
+        data = {}
+        for day, fp in zip(range(1, 6), "abcab"):
+            data = track.update_tracker([site], {"a.com": ("U", {"fp": fp})}, f"2026-10-0{day}", data)
+        s = data["sites"][0]
+        self.assertGreaterEqual(s["noisy"], 2)
+        self.assertNotIn("changed", s)
+        self.assertNotIn("updated", s)
 
     def test_wayback_stops_when_throttled(self):
         sites = [{"id": f"s{i}.com", "url": f"https://s{i}.com/", "created": 1760000000} for i in range(5)]
