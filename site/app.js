@@ -132,8 +132,14 @@
         if (x > maxAge) break;
       }
     }
+    // Stop the curve once too few sites are that old for the share to mean much.
+    const floor = 40;
     const out = [];
-    for (let x = 0; x <= maxAge; x++) out.push({ x, y: n[x] ? up[x] / n[x] : null, n: n[x] });
+    let enough = true;
+    for (let x = 0; x <= maxAge; x++) {
+      enough = enough && n[x] >= floor;
+      out.push({ x, y: enough && n[x] ? up[x] / n[x] : null, n: n[x] });
+    }
     return out;
   }
 
@@ -197,16 +203,19 @@
     const m = { top: 12, right: labelled ? 92 : 16, bottom: 30, left: 40 };
     const f = frame(node, node.clientWidth < 520 ? 300 : 400, m);
     const x = d3.scaleLinear().domain([0, maxAge]).range([0, f.iw]);
+    const lastX = d3.max(series, (s) => d3.max(s.points.filter((d) => d.y != null), (d) => d.x)) || maxAge;
+    x.domain([0, Math.min(maxAge, Math.max(30, Math.ceil(lastX / 30) * 30))]);
     const lows = series.flatMap((s) => s.points.filter((d) => d.n >= LINE_MIN_N && d.y != null).map((d) => d.y));
     const lo = Math.max(0, Math.floor(((d3.min(lows) ?? 0) - 0.04) * 10) / 10);
     const y = d3.scaleLinear().domain([lo, 1]).range([f.ih, 0]);
     f.g.append("g").attr("class", "gridlines").call(d3.axisLeft(y).ticks(5).tickSize(-f.iw).tickFormat(""));
     f.g.append("g").attr("class", "axis").call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".0%")).tickSize(0).tickPadding(8)).select(".domain").remove();
-    const xt = (f.iw < 500 ? [0, 90, 180, 270, 365] : [0, 30, 60, 90, 120, 180, 240, 300, 365]).filter((t) => t <= maxAge);
+    const xEnd = x.domain()[1];
+    const xt = (f.iw < 500 ? [0, 90, 180, 270, 365] : [0, 30, 60, 90, 120, 180, 240, 300, 365]).filter((t) => t <= xEnd);
     f.g.append("g").attr("class", "axis").attr("transform", `translate(0,${f.ih})`)
       .call(d3.axisBottom(x).tickValues(xt).tickFormat((d) => d + "d").tickSizeOuter(0));
 
-    if (state.day <= maxAge) {
+    if (state.day <= xEnd) {
       f.g.append("line").attr("class", "marker-rule").attr("x1", x(state.day)).attr("x2", x(state.day)).attr("y1", 0).attr("y2", f.ih);
       f.g.append("text").attr("class", "label").attr("x", x(state.day) + 5).attr("y", f.ih - 6).text(`${state.day}d`);
     }
@@ -304,7 +313,7 @@
     $("#kpi-up-foot").textContent = `${fmtInt(upNow)} of ${fmtInt(checked.length)} sites`;
 
     const half = curve.find((d) => d.n >= 10 && d.y != null && d.y < 0.5);
-    const lastOk = [...curve].reverse().find((d) => d.n >= 10);
+    const lastOk = [...curve].reverse().find((d) => d.y != null);
     $("#kpi-half").textContent = half ? `${half.x}d` : lastOk ? `>${lastOk.x}d` : "–";
 
     const from = Math.max(1, dayTs.length - 30);
@@ -708,12 +717,12 @@
     const labelled = series.length <= 4 && node.clientWidth > 520;
     const m = { top: 12, right: labelled ? 92 : 16, bottom: 30, left: 40 };
     const f = frame(node, node.clientWidth < 520 ? 260 : 320, m);
-    const x = d3.scaleLog().domain([365, 1]).range([0, f.iw]);
+    const x = d3.scaleLinear().domain([365, 1]).range([0, f.iw]);
     const y = d3.scaleLinear().domain([0, 1]).range([f.ih, 0]);
     f.g.append("g").attr("class", "gridlines").call(d3.axisLeft(y).ticks(5).tickSize(-f.iw).tickFormat(""));
     f.g.append("g").attr("class", "axis").call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".0%")).tickSize(0).tickPadding(8)).select(".domain").remove();
     const names = { 365: "1 year", 180: "6 months", 90: "3 months", 30: "1 month", 14: "2 weeks", 7: "1 week", 3: "3 days", 1: "1 day" };
-    const xt = f.iw < 500 ? [365, 90, 30, 7, 1] : [365, 180, 90, 30, 14, 7, 3, 1];
+    const xt = f.iw < 500 ? [365, 180, 90, 1] : [365, 270, 180, 90, 30, 1];
     f.g.append("g").attr("class", "axis").attr("transform", `translate(0,${f.ih})`)
       .call(d3.axisBottom(x).tickValues(xt).tickFormat((d) => names[d] || `${d} days`).tickSizeOuter(0));
     const line = d3.line().defined((d) => d.y != null).x((d) => x(d.x)).y((d) => y(d.y)).curve(d3.curveMonotoneX);
