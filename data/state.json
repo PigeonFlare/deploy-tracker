@@ -55,14 +55,15 @@
   "2026-09-30",
   "2026-10-07",
   "2026-10-14",
-  "2026-10-21"
+  "2026-10-21",
+  "2026-10-28"
  ],
  "reddit_cursors": {
-  "SideProject": 1781922109,
-  "InternetIsBeautiful": 1794768395,
-  "IMadeThis": 1794768395,
-  "ClaudeAI": 1794768395,
-  "SaaS": 1794768395
+  "SideProject": 1782873475,
+  "InternetIsBeautiful": 1794854784,
+  "IMadeThis": 1794854784,
+  "ClaudeAI": 1794854784,
+  "SaaS": 1794854784
  },
  "archive_limit": 100
 }
